@@ -1,0 +1,45 @@
+# ADDON superblock
+# Copyright (C)
+# This file is distributed under the same license as the Friendica superblock addon package.
+# 
+# 
+# Translators:
+# Albert, 2016
+# juanman <juanma@gnutn.org.ar>, 2017
+msgid ""
+msgstr ""
+"Project-Id-Version: friendica\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2017-04-21 08:45+0200\n"
+"PO-Revision-Date: 2017-07-04 16:27+0000\n"
+"Last-Translator: juanman <juanma@gnutn.org.ar>\n"
+"Language-Team: Spanish (http://www.transifex.com/Friendica/friendica/language/es/)\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: es\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: superblock.php:53 superblock.php:57
+msgid "\"Superblock\""
+msgstr ""
+
+#: superblock.php:60
+msgid "Comma separated profile URLS to block"
+msgstr "Perfil de URLS a bloque separado por comas"
+
+#: superblock.php:64
+msgid "Save Settings"
+msgstr "Guardar configuración"
+
+#: superblock.php:76
+msgid "SUPERBLOCK Settings saved."
+msgstr ""
+
+#: superblock.php:148
+msgid "Block Completely"
+msgstr "Bloquear completamente"
+
+#: superblock.php:168
+msgid "superblock settings updated"
+msgstr ""

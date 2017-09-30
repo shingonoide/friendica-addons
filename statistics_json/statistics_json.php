@@ -5,6 +5,7 @@
  * Description: Generates some statistics for http://the-federation.info/
  * Version: 0.2
  * Author: Michael Vogel <https://pirati.ca/profile/heluecht>
+ * Status: Unsupported
  */
 
 function statistics_json_install() {
@@ -109,11 +110,11 @@ function statistics_json_cron($a,$b) {
 			$month = time() - (30 * 24 * 60 * 60);
 
 			foreach ($users AS $user) {
-				if ((strtotime($user['login_date']) > $halfyear) OR
+				if ((strtotime($user['login_date']) > $halfyear) ||
 					(strtotime($user['lastitem_date']) > $halfyear))
 					++$active_users_halfyear;
 
-				if ((strtotime($user['login_date']) > $month) OR
+				if ((strtotime($user['login_date']) > $month) ||
 					(strtotime($user['lastitem_date']) > $month))
 					++$active_users_monthly;
 

@@ -26,16 +26,63 @@ function leistungsschutzrecht_getsiteinfo($a, &$siteinfo) {
 	if (!leistungsschutzrecht_is_member_site($siteinfo["url"]))
 		return;
 
-	$siteinfo["title"] = $siteinfo["url"];
-	unset($siteinfo["text"]);
+	//$siteinfo["title"] = $siteinfo["url"];
+	$siteinfo["text"] = leistungsschutzrecht_cuttext($siteinfo["text"]);
 	unset($siteinfo["image"]);
 	unset($siteinfo["images"]);
 	unset($siteinfo["keywords"]);
 }
 
+function leistungsschutzrecht_cuttext($text) {
+	$text = str_replace(array("\r", "\n"), array(" ", " "), $text);
+
+	do {
+		$oldtext = $text;
+		$text = str_replace("  ", " ", $text);
+	} while ($oldtext != $text);
+
+	$words = explode(" ", $text);
+
+	$text = "";
+	$count = 0;
+	$limit = 7;
+
+	foreach ($words as $word) {
+		if ($text != "")
+			$text .= " ";
+
+		$text .= $word;
+
+		if (++$count >= $limit) {
+			if (sizeof($words) > $limit)
+				$text .= " ...";
+
+			break;
+		}
+	}
+	return $text;
+}
+
 function leistungsschutzrecht_fetchsites() {
 	require_once("include/network.php");
 
+	// This list works - but question is how current it is
+	$url = "http://leistungsschutzrecht-stoppen.d-64.org/blacklist.txt";
+	$sitelist = fetch_url($url);
+	$siteurls = explode(',', $sitelist);
+
+	$whitelist = array('tagesschau.de', 'heute.de', 'wdr.de');
+
+	$sites = array();
+	foreach ($siteurls AS $site) {
+		if (!in_array($site, $whitelist)) {
+			$sites[$site] = $site;
+		}
+	}
+
+	// I would prefer parsing the list from the original site, but I haven't found a list.
+	// The following stays here to possibly reenable it in the future without having to reinvent the wheel completely.
+/*
 	$sites = array();
 
 	$url = "http://www.vg-media.de/lizenzen/digitale-verlegerische-angebote/wahrnehmungsberechtigte-digitale-verlegerische-angebote.html";
@@ -56,7 +103,7 @@ function leistungsschutzrecht_fetchsites() {
 		if (isset($attr["href"])) {
 			$urldata = parse_url($attr["href"]);
 
-			if (isset($urldata["host"]) AND !isset($urldata["path"])) {
+			if (isset($urldata["host"]) && !isset($urldata["path"])) {
 				$cleanedurlpart = explode("%", $urldata["host"]);
 
 				$hostname = explode(".", $cleanedurlpart[0]);
@@ -65,6 +112,7 @@ function leistungsschutzrecht_fetchsites() {
 			}
 		}
 	}
+*/
 
 	if (sizeof($sites)) {
 		set_config('leistungsschutzrecht','sites',$sites);

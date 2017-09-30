@@ -1,7 +1,7 @@
 <?php
 /**
- * Name: StatusNet Connector
- * Description: Relay public postings to a connected StatusNet account
+ * Name: GNU Social Connector
+ * Description: Bidirectional (posting, relaying and reading) connector for GNU Social.
  * Version: 1.0.5
  * Author: Tobias Diekershoff <https://f.diekershoff.de/profile/tobias>
  * Author: Michael Vogel <https://pirati.ca/profile/heluecht>
@@ -35,7 +35,7 @@
 
 
 /***
- * We have to alter the TwitterOAuth class a little bit to work with any StatusNet
+ * We have to alter the TwitterOAuth class a little bit to work with any GNU Social
  * installation abroad. Basically it's only make the API path variable and be happy.
  *
  * Thank you guys for the Twitter compatible API!
@@ -44,6 +44,8 @@
 define('STATUSNET_DEFAULT_POLL_INTERVAL', 5); // given in minutes
 
 require_once('library/twitteroauth.php');
+require_once('include/enotify.php');
+require_once("include/socgraph.php");
 
 class StatusNetOAuth extends TwitterOAuth {
     function get_maxlength() {
@@ -119,7 +121,8 @@ function statusnet_install() {
 	register_hook('jot_networks',    'addon/statusnet/statusnet.php', 'statusnet_jot_nets');
 	register_hook('cron', 'addon/statusnet/statusnet.php', 'statusnet_cron');
 	register_hook('prepare_body', 'addon/statusnet/statusnet.php', 'statusnet_prepare_body');
-	logger("installed statusnet");
+	register_hook('check_item_notification','addon/statusnet/statusnet.php', 'statusnet_check_item_notification');
+	logger("installed GNU Social");
 }
 
 
@@ -131,12 +134,17 @@ function statusnet_uninstall() {
 	unregister_hook('jot_networks',    'addon/statusnet/statusnet.php', 'statusnet_jot_nets');
 	unregister_hook('cron', 'addon/statusnet/statusnet.php', 'statusnet_cron');
 	unregister_hook('prepare_body', 'addon/statusnet/statusnet.php', 'statusnet_prepare_body');
+	unregister_hook('check_item_notification','addon/statusnet/statusnet.php', 'statusnet_check_item_notification');
 
 	// old setting - remove only
 	unregister_hook('post_local_end', 'addon/statusnet/statusnet.php', 'statusnet_post_hook');
 	unregister_hook('plugin_settings', 'addon/statusnet/statusnet.php', 'statusnet_settings');
 	unregister_hook('plugin_settings_post', 'addon/statusnet/statusnet.php', 'statusnet_settings_post');
 
+}
+
+function statusnet_check_item_notification($a, &$notification_data) {
+	$notification_data["profiles"][] = get_pconfig($notification_data["uid"], 'statusnet', 'own_url');
 }
 
 function statusnet_jot_nets(&$a,&$b) {
@@ -147,21 +155,21 @@ function statusnet_jot_nets(&$a,&$b) {
 	if(intval($statusnet_post) == 1) {
 		$statusnet_defpost = get_pconfig(local_user(),'statusnet','post_by_default');
 		$selected = ((intval($statusnet_defpost) == 1) ? ' checked="checked" ' : '');
-		$b .= '<div class="profile-jot-net"><input type="checkbox" name="statusnet_enable"' . $selected . ' value="1" /> ' 
-			. t('Post to StatusNet') . '</div>';
+		$b .= '<div class="profile-jot-net"><input type="checkbox" name="statusnet_enable"' . $selected . ' value="1" /> '
+			. t('Post to GNU Social') . '</div>';
 	}
 }
 
 function statusnet_settings_post ($a,$post) {
 	if(! local_user())
 		return;
-	// don't check statusnet settings if statusnet submit button is not clicked
+	// don't check GNU Social settings if GNU Social submit button is not clicked
 	if (!x($_POST,'statusnet-submit'))
 		return;
 
 	if (isset($_POST['statusnet-disconnect'])) {
 		/***
-		 * if the statusnet-disconnect checkbox is set, clear the statusnet configuration
+		 * if the GNU Social-disconnect checkbox is set, clear the GNU Social configuration
 		 */
 		del_pconfig(local_user(), 'statusnet', 'consumerkey');
 		del_pconfig(local_user(), 'statusnet', 'consumersecret');
@@ -178,7 +186,7 @@ function statusnet_settings_post ($a,$post) {
 	} else {
 	if (isset($_POST['statusnet-preconf-apiurl'])) {
 		/***
-		 * If the user used one of the preconfigured StatusNet server credentials
+		 * If the user used one of the preconfigured GNU Social server credentials
 		 * use them. All the data are available in the global config.
 		 * Check the API Url never the less and blame the admin if it's not working ^^
 		 */
@@ -200,7 +208,7 @@ function statusnet_settings_post ($a,$post) {
 		goaway($a->get_baseurl().'/settings/connectors');
 	} else {
 	if (isset($_POST['statusnet-consumersecret'])) {
-		//  check if we can reach the API of the StatusNet server
+		//  check if we can reach the API of the GNU Social server
 		//  we'll check the API Version for that, if we don't get one we'll try to fix the path but will
 		//  resign quickly after this one try to fix the path ;-)
 		$apibase = $_POST['statusnet-baseapi'];
@@ -222,18 +230,18 @@ function statusnet_settings_post ($a,$post) {
 				set_pconfig(local_user(), 'statusnet', 'baseapi', $apibase );
 			} else {
 				//  still not the correct API base, let's do noting
-				notice( t('We could not contact the StatusNet API with the Path you entered.').EOL );
+				notice( t('We could not contact the GNU Social API with the Path you entered.').EOL );
 			}
 		}
 		goaway($a->get_baseurl().'/settings/connectors');
 	} else {
 	if (isset($_POST['statusnet-pin'])) {
-		//  if the user supplied us with a PIN from StatusNet, let the magic of OAuth happen
+		//  if the user supplied us with a PIN from GNU Social, let the magic of OAuth happen
 		$api     = get_pconfig(local_user(), 'statusnet', 'baseapi');
 		$ckey    = get_pconfig(local_user(), 'statusnet', 'consumerkey'  );
 		$csecret = get_pconfig(local_user(), 'statusnet', 'consumersecret' );
 		//  the token and secret for which the PIN was generated were hidden in the settings
-		//  form as token and token2, we need a new connection to StatusNet using these token
+		//  form as token and token2, we need a new connection to GNU Social using these token
 		//  and secret to request a Access Token with the PIN
 		$connection = new StatusNetOAuth($api, $ckey, $csecret, $_POST['statusnet-token'], $_POST['statusnet-token2']);
 		$token   = $connection->getAccessToken( $_POST['statusnet-pin'] );
@@ -256,7 +264,7 @@ function statusnet_settings_post ($a,$post) {
 		if (!intval($_POST['statusnet-mirror']))
 			del_pconfig(local_user(),'statusnet','lastid');
 
-		info( t('StatusNet settings updated.') . EOL);
+		info( t('GNU Social settings updated.') . EOL);
 	}}}}
 }
 function statusnet_settings(&$a,&$s) {
@@ -280,19 +288,22 @@ function statusnet_settings(&$a,&$s) {
 	$defchecked = (($defenabled) ? ' checked="checked" ' : '');
 	$mirrorenabled = get_pconfig(local_user(),'statusnet','mirror_posts');
 	$mirrorchecked = (($mirrorenabled) ? ' checked="checked" ' : '');
-	$importenabled = get_pconfig(local_user(),'statusnet','import');
-	$importchecked = (($importenabled) ? ' checked="checked" ' : '');
+	$import = get_pconfig(local_user(),'statusnet','import');
+	$importselected = array("", "", "");
+	$importselected[$import] = ' selected="selected"';
+	//$importenabled = get_pconfig(local_user(),'statusnet','import');
+	//$importchecked = (($importenabled) ? ' checked="checked" ' : '');
 	$create_userenabled = get_pconfig(local_user(),'statusnet','create_user');
 	$create_userchecked = (($create_userenabled) ? ' checked="checked" ' : '');
 
 	$css = (($enabled) ? '' : '-disabled');
 
 	$s .= '<span id="settings_statusnet_inflated" class="settings-block fakelink" style="display: block;" onclick="openClose(\'settings_statusnet_expanded\'); openClose(\'settings_statusnet_inflated\');">';
-	$s .= '<img class="connector'.$css.'" src="images/gnusocial.png" /><h3 class="connector">'. t('StatusNet Import/Export/Mirror').'</h3>';
+	$s .= '<img class="connector'.$css.'" src="images/gnusocial.png" /><h3 class="connector">'. t('GNU Social Import/Export/Mirror').'</h3>';
 	$s .= '</span>';
 	$s .= '<div id="settings_statusnet_expanded" class="settings-block" style="display: none;">';
 	$s .= '<span class="fakelink" onclick="openClose(\'settings_statusnet_expanded\'); openClose(\'settings_statusnet_inflated\');">';
-	$s .= '<img class="connector'.$css.'" src="images/gnusocial.png" /><h3 class="connector">'. t('StatusNet Import/Export/Mirror').'</h3>';
+	$s .= '<img class="connector'.$css.'" src="images/gnusocial.png" /><h3 class="connector">'. t('GNU Social Import/Export/Mirror').'</h3>';
 	$s .= '</span>';
 
 	if ( (!$ckey) && (!$csecret) ) {
@@ -301,14 +312,14 @@ function statusnet_settings(&$a,&$s) {
 		 */
 		$globalsn = get_config('statusnet', 'sites');
 		/***
-		 * lets check if we have one or more globally configured StatusNet
+		 * lets check if we have one or more globally configured GNU Social
 		 * server OAuth credentials in the configuration. If so offer them
 		 * with a little explanation to the user as choice - otherwise
 		 * ignore this option entirely.
 		 */
 		if (! $globalsn == null) {
-			$s .= '<h4>' . t('Globally Available StatusNet OAuthKeys') . '</h4>';
-			$s .= '<p>'. t("There are preconfigured OAuth key pairs for some StatusNet servers available. If you are using one of them, please use these credentials. If not feel free to connect to any other StatusNet instance \x28see below\x29.") .'</p>';
+			$s .= '<h4>' . t('Globally Available GNU Social OAuthKeys') . '</h4>';
+			$s .= '<p>'. t("There are preconfigured OAuth key pairs for some GNU Social servers available. If you are using one of them, please use these credentials. If not feel free to connect to any other GNU Social instance \x28see below\x29.") .'</p>';
 			$s .= '<div id="statusnet-preconf-wrapper">';
 			foreach ($globalsn as $asn) {
 				$s .= '<input type="radio" name="statusnet-preconf-apiurl" value="'. $asn['apiurl'] .'">'. $asn['sitename'] .'<br />';
@@ -317,7 +328,7 @@ function statusnet_settings(&$a,&$s) {
 			$s .= '<div class="settings-submit-wrapper" ><input type="submit" name="statusnet-submit" class="settings-submit" value="' . t('Save Settings') . '" /></div>';
 		}
 		$s .= '<h4>' . t('Provide your own OAuth Credentials') . '</h4>';
-		$s .= '<p>'. t('No consumer key pair for StatusNet found. Register your Friendica Account as an desktop client on your StatusNet account, copy the consumer key pair here and enter the API base root.<br />Before you register your own OAuth key pair ask the administrator if there is already a key pair for this Friendica installation at your favorited StatusNet installation.') .'</p>';
+		$s .= '<p>'. t('No consumer key pair for GNU Social found. Register your Friendica Account as an desktop client on your GNU Social account, copy the consumer key pair here and enter the API base root.<br />Before you register your own OAuth key pair ask the administrator if there is already a key pair for this Friendica installation at your favorited GNU Social installation.') .'</p>';
 		$s .= '<div id="statusnet-consumer-wrapper">';
 		$s .= '<label id="statusnet-consumerkey-label" for="statusnet-consumerkey">'. t('OAuth Consumer Key') .'</label>';
 		$s .= '<input id="statusnet-consumerkey" type="text" name="statusnet-consumerkey" size="35" /><br />';
@@ -328,7 +339,7 @@ function statusnet_settings(&$a,&$s) {
 		$s .= '<label id="statusnet-baseapi-label" for="statusnet-baseapi">'. t("Base API Path \x28remember the trailing /\x29") .'</label>';
 		$s .= '<input id="statusnet-baseapi" type="text" name="statusnet-baseapi" size="35" /><br />';
 		$s .= '<div class="clear"></div>';
-		//$s .= '<label id="statusnet-applicationname-label" for="statusnet-applicationname">'.t('StatusNet application name').'</label>';
+		//$s .= '<label id="statusnet-applicationname-label" for="statusnet-applicationname">'.t('GNU Socialapplication name').'</label>';
 		//$s .= '<input id="statusnet-applicationname" type="text" name="statusnet-applicationname" size="35" /><br />';
 		$s .= '<p></p><div class="clear"></div>';
 		$s .= '<div class="settings-submit-wrapper" ><input type="submit" name="statusnet-submit" class="settings-submit" value="' . t('Save Settings') . '" /></div>';
@@ -339,10 +350,10 @@ function statusnet_settings(&$a,&$s) {
 		 */
 		if ( (!$otoken) && (!$osecret) ) {
 			/***
-			 * the user has not yet connected the account to statusnet
+			 * the user has not yet connected the account to GNU Social
 			 * get a temporary OAuth key/secret pair and display a button with
 			 * which the user can request a PIN to connect the account to a
-			 * account at statusnet
+			 * account at GNU Social
 			 */
 			$connection = new StatusNetOAuth($api, $ckey, $csecret);
 			$request_token = $connection->getRequestToken('oob');
@@ -350,10 +361,10 @@ function statusnet_settings(&$a,&$s) {
 			/***
 			 *  make some nice form
 			 */
-			$s .= '<p>'. t('To connect to your StatusNet account click the button below to get a security code from StatusNet which you have to copy into the input box below and submit the form. Only your <strong>public</strong> posts will be posted to StatusNet.') .'</p>';
-			$s .= '<a href="'.$connection->getAuthorizeURL($token,False).'" target="_statusnet"><img src="addon/statusnet/signinwithstatusnet.png" alt="'. t('Log in with StatusNet') .'"></a>';
+			$s .= '<p>'. t('To connect to your GNU Social account click the button below to get a security code from GNU Social which you have to copy into the input box below and submit the form. Only your <strong>public</strong> posts will be posted to GNU Social.') .'</p>';
+			$s .= '<a href="'.$connection->getAuthorizeURL($token,False).'" target="_statusnet"><img src="addon/statusnet/signinwithstatusnet.png" alt="'. t('Log in with GNU Social') .'"></a>';
 			$s .= '<div id="statusnet-pin-wrapper">';
-			$s .= '<label id="statusnet-pin-label" for="statusnet-pin">'. t('Copy the security code from StatusNet here') .'</label>';
+			$s .= '<label id="statusnet-pin-label" for="statusnet-pin">'. t('Copy the security code from GNU Social here') .'</label>';
 			$s .= '<input id="statusnet-pin" type="text" name="statusnet-pin" />';
 			$s .= '<input id="statusnet-token" type="hidden" name="statusnet-token" value="'.$token.'" />';
 			$s .= '<input id="statusnet-token2" type="hidden" name="statusnet-token2" value="'.$request_token['oauth_token_secret'].'" />';
@@ -361,38 +372,45 @@ function statusnet_settings(&$a,&$s) {
 			$s .= '<div class="settings-submit-wrapper" ><input type="submit" name="statusnet-submit" class="settings-submit" value="' . t('Save Settings') . '" /></div>';
 			$s .= '<h4>'.t('Cancel Connection Process').'</h4>';
 			$s .= '<div id="statusnet-cancel-wrapper">';
-			$s .= '<p>'.t('Current StatusNet API is').': '.$api.'</p>';
-			$s .= '<label id="statusnet-cancel-label" for="statusnet-cancel">'. t('Cancel StatusNet Connection') . '</label>';
+			$s .= '<p>'.t('Current GNU Social API is').': '.$api.'</p>';
+			$s .= '<label id="statusnet-cancel-label" for="statusnet-cancel">'. t('Cancel GNU Social Connection') . '</label>';
 			$s .= '<input id="statusnet-cancel" type="checkbox" name="statusnet-disconnect" value="1" />';
 			$s .= '</div><div class="clear"></div>';
 			$s .= '<div class="settings-submit-wrapper" ><input type="submit" name="statusnet-submit" class="settings-submit" value="' . t('Save Settings') . '" /></div>';
 		} else {
 			/***
 			 *  we have an OAuth key / secret pair for the user
-			 *  so let's give a chance to disable the postings to statusnet
+			 *  so let's give a chance to disable the postings to GNU Social
 			 */
 			$connection = new StatusNetOAuth($api,$ckey,$csecret,$otoken,$osecret);
 			$details = $connection->get('account/verify_credentials');
 			$s .= '<div id="statusnet-info" ><img id="statusnet-avatar" src="'.$details->profile_image_url.'" /><p id="statusnet-info-block">'. t('Currently connected to: ') .'<a href="'.$details->statusnet_profile_url.'" target="_statusnet">'.$details->screen_name.'</a><br /><em>'.$details->description.'</em></p></div>';
-			$s .= '<p>'. t('If enabled all your <strong>public</strong> postings can be posted to the associated StatusNet account. You can choose to do so by default (here) or for every posting separately in the posting options when writing the entry.') .'</p>';
+			$s .= '<p>'. t('If enabled all your <strong>public</strong> postings can be posted to the associated GNU Social account. You can choose to do so by default (here) or for every posting separately in the posting options when writing the entry.') .'</p>';
 			if ($a->user['hidewall']) {
-			    $s .= '<p>'. t('<strong>Note</strong>: Due your privacy settings (<em>Hide your profile details from unknown viewers?</em>) the link potentially included in public postings relayed to StatusNet will lead the visitor to a blank page informing the visitor that the access to your profile has been restricted.') .'</p>';
+			    $s .= '<p>'. t('<strong>Note</strong>: Due your privacy settings (<em>Hide your profile details from unknown viewers?</em>) the link potentially included in public postings relayed to GNU Social will lead the visitor to a blank page informing the visitor that the access to your profile has been restricted.') .'</p>';
 			}
 			$s .= '<div id="statusnet-enable-wrapper">';
-			$s .= '<label id="statusnet-enable-label" for="statusnet-checkbox">'. t('Allow posting to StatusNet') .'</label>';
+			$s .= '<label id="statusnet-enable-label" for="statusnet-checkbox">'. t('Allow posting to GNU Social') .'</label>';
 			$s .= '<input id="statusnet-checkbox" type="checkbox" name="statusnet-enable" value="1" ' . $checked . '/>';
 			$s .= '<div class="clear"></div>';
-			$s .= '<label id="statusnet-default-label" for="statusnet-default">'. t('Send public postings to StatusNet by default') .'</label>';
+			$s .= '<label id="statusnet-default-label" for="statusnet-default">'. t('Send public postings to GNU Social by default') .'</label>';
 			$s .= '<input id="statusnet-default" type="checkbox" name="statusnet-default" value="1" ' . $defchecked . '/>';
 			$s .= '<div class="clear"></div>';
 
-			$s .= '<label id="statusnet-mirror-label" for="statusnet-mirror">'.t('Mirror all posts from statusnet that are no replies or repeated messages').'</label>';
+			$s .= '<label id="statusnet-mirror-label" for="statusnet-mirror">'.t('Mirror all posts from GNU Social that are no replies or repeated messages').'</label>';
 			$s .= '<input id="statusnet-mirror" type="checkbox" name="statusnet-mirror" value="1" '. $mirrorchecked . '/>';
+
 			$s .= '<div class="clear"></div>';
 			$s .= '</div>';
 
 			$s .= '<label id="statusnet-import-label" for="statusnet-import">'.t('Import the remote timeline').'</label>';
-			$s .= '<input id="statusnet-import" type="checkbox" name="statusnet-import" value="1" '. $importchecked . '/>';
+			//$s .= '<input id="statusnet-import" type="checkbox" name="statusnet-import" value="1" '. $importchecked . '/>';
+
+			$s .= '<select name="statusnet-import" id="statusnet-import" />';
+			$s .= '<option value="0" '.$importselected[0].'>'.t("Disabled").'</option>';
+			$s .= '<option value="1" '.$importselected[1].'>'.t("Full Timeline").'</option>';
+			$s .= '<option value="2" '.$importselected[2].'>'.t("Only Mentions").'</option>';
+			$s .= '</select>';
 			$s .= '<div class="clear"></div>';
 /*
 			$s .= '<label id="statusnet-create_user-label" for="statusnet-create_user">'.t('Automatically create contacts').'</label>';
@@ -403,33 +421,39 @@ function statusnet_settings(&$a,&$s) {
 			$s .= '<label id="statusnet-disconnect-label" for="statusnet-disconnect">'. t('Clear OAuth configuration') .'</label>';
 			$s .= '<input id="statusnet-disconnect" type="checkbox" name="statusnet-disconnect" value="1" />';
 			$s .= '</div><div class="clear"></div>';
-			$s .= '<div class="settings-submit-wrapper" ><input type="submit" name="statusnet-submit" class="settings-submit" value="' . t('Save Settings') . '" /></div>'; 
+			$s .= '<div class="settings-submit-wrapper" ><input type="submit" name="statusnet-submit" class="settings-submit" value="' . t('Save Settings') . '" /></div>';
 		}
 	}
 	$s .= '</div><div class="clear"></div>';
 }
 
 
-function statusnet_post_local(&$a,&$b) {
-	if($b['edit'])
+function statusnet_post_local(&$a, &$b) {
+	if ($b['edit']) {
 		return;
-
-	if((local_user()) && (local_user() == $b['uid']) && (! $b['private'])) {
-
-		$statusnet_post = get_pconfig(local_user(),'statusnet','post');
-		$statusnet_enable = (($statusnet_post && x($_REQUEST,'statusnet_enable')) ? intval($_REQUEST['statusnet_enable']) : 0);
-
-		// if API is used, default to the chosen settings
-		if($_REQUEST['api_source'] && intval(get_pconfig(local_user(),'statusnet','post_by_default')))
-			$statusnet_enable = 1;
-
-		if(! $statusnet_enable)
-			return;
-
-		if(strlen($b['postopts']))
-			$b['postopts'] .= ',';
-		$b['postopts'] .= 'statusnet';
 	}
+
+	if (!local_user() || (local_user() != $b['uid'])) {
+		return;
+	}
+
+	$statusnet_post = get_pconfig(local_user(),'statusnet','post');
+	$statusnet_enable = (($statusnet_post && x($_REQUEST,'statusnet_enable')) ? intval($_REQUEST['statusnet_enable']) : 0);
+
+	// if API is used, default to the chosen settings
+	if ($b['api_source'] && intval(get_pconfig(local_user(),'statusnet','post_by_default'))) {
+		$statusnet_enable = 1;
+	}
+
+	if (!$statusnet_enable) {
+		return;
+	}
+
+	if (strlen($b['postopts'])) {
+		$b['postopts'] .= ',';
+	}
+
+	$b['postopts'] .= 'statusnet';
 }
 
 function statusnet_action($a, $uid, $pid, $action) {
@@ -460,7 +484,7 @@ function statusnet_action($a, $uid, $pid, $action) {
 function statusnet_post_hook(&$a,&$b) {
 
 	/**
-	 * Post to statusnet
+	 * Post to GNU Social
 	 */
 
 	if (!get_pconfig($b["uid"],'statusnet','import')) {
@@ -474,11 +498,11 @@ function statusnet_post_hook(&$a,&$b) {
 	if($b['parent'] != $b['id']) {
 		logger("statusnet_post_hook: parameter ".print_r($b, true), LOGGER_DATA);
 
-		// Looking if its a reply to a statusnet post
+		// Looking if its a reply to a GNU Social post
 		$hostlength = strlen($hostname) + 2;
-		if ((substr($b["parent-uri"], 0, $hostlength) != $hostname."::") AND (substr($b["extid"], 0, $hostlength) != $hostname."::")
-			AND (substr($b["thr-parent"], 0, $hostlength) != $hostname."::")) {
-			logger("statusnet_post_hook: no statusnet post ".$b["parent"]);
+		if ((substr($b["parent-uri"], 0, $hostlength) != $hostname."::") && (substr($b["extid"], 0, $hostlength) != $hostname."::")
+			&& (substr($b["thr-parent"], 0, $hostlength) != $hostname."::")) {
+			logger("statusnet_post_hook: no GNU Social post ".$b["parent"]);
 			return;
 		}
 
@@ -505,18 +529,18 @@ function statusnet_post_hook(&$a,&$b) {
 		$nicknameplain = "@".$nick;
 
 		logger("statusnet_post_hook: comparing ".$nickname." and ".$nicknameplain." with ".$b["body"], LOGGER_DEBUG);
-		if ((strpos($b["body"], $nickname) === false) AND (strpos($b["body"], $nicknameplain) === false))
+		if ((strpos($b["body"], $nickname) === false) && (strpos($b["body"], $nicknameplain) === false))
 			$b["body"] = $nickname." ".$b["body"];
 
 		logger("statusnet_post_hook: parent found ".print_r($orig_post, true), LOGGER_DEBUG);
 	} else {
 		$iscomment = false;
 
-		if($b['private'] OR !strstr($b['postopts'],'statusnet'))
+		if($b['private'] || !strstr($b['postopts'],'statusnet'))
 			return;
 	}
 
-	if (($b['verb'] == ACTIVITY_POST) AND $b['deleted'])
+	if (($b['verb'] == ACTIVITY_POST) && $b['deleted'])
 		statusnet_action($a, $b["uid"], substr($orig_post["uri"], $hostlength), "delete");
 
 	if($b['verb'] == ACTIVITY_LIKE) {
@@ -531,14 +555,14 @@ function statusnet_post_hook(&$a,&$b) {
 	if($b['deleted'] || ($b['created'] !== $b['edited']))
 		return;
 
-	// if posts comes from statusnet don't send it back
+	// if posts comes from GNU Social don't send it back
 	if($b['extid'] == NETWORK_STATUSNET)
 		return;
 
 	if($b['app'] == "StatusNet")
 		return;
 
-	logger('statusnet post invoked');
+	logger('GNU Socialpost invoked');
 
 	load_pconfig($b['uid'], 'statusnet');
 
@@ -550,7 +574,7 @@ function statusnet_post_hook(&$a,&$b) {
 
 	if($ckey && $csecret && $otoken && $osecret) {
 
-		// If it's a repeated message from statusnet then do a native retweet and exit
+		// If it's a repeated message from GNU Social then do a native retweet and exit
 		if (statusnet_is_retweet($a, $b['uid'], $b['body']))
 			return;
 
@@ -566,18 +590,18 @@ function statusnet_post_hook(&$a,&$b) {
 		$msgarr = plaintext($a, $b, $max_char, true, 7);
 		$msg = $msgarr["text"];
 
-		if (($msg == "") AND isset($msgarr["title"]))
+		if (($msg == "") && isset($msgarr["title"]))
 			$msg = shortenmsg($msgarr["title"], $max_char - 50);
 
 		$image = "";
 
-		if (isset($msgarr["url"])) {
-			if ((strlen($msgarr["url"]) > 20) AND
+		if (isset($msgarr["url"]) && ($msgarr["type"] != "photo")) {
+			if ((strlen($msgarr["url"]) > 20) &&
 				((strlen($msg." \n".$msgarr["url"]) > $max_char)))
 				$msg .= " \n".short_link($msgarr["url"]);
 			else
 				$msg .= " \n".$msgarr["url"];
-		} elseif (isset($msgarr["image"]) AND ($msgarr["type"] != "video"))
+		} elseif (isset($msgarr["image"]) && ($msgarr["type"] != "video"))
 			$image = $msgarr["image"];
 
 		if ($image != "") {
@@ -611,7 +635,7 @@ function statusnet_post_hook(&$a,&$b) {
 				set_pconfig($b["uid"], "statusnet", "application_name", strip_tags($result->source));
 
 			if ($result->error) {
-				logger('Send to StatusNet failed: "'.$result->error.'"');
+				logger('Send to GNU Social failed: "'.$result->error.'"');
 			} elseif ($iscomment) {
 				logger('statusnet_post: Update extid '.$result->id." for post id ".$b['id']);
 				q("UPDATE `item` SET `extid` = '%s', `body` = '%s' WHERE `id` = %d",
@@ -720,7 +744,7 @@ function statusnet_prepare_body(&$a,&$b) {
 			$nickname = "@[url=".$orig_post["author-link"]."]".$nick."[/url]";
 			$nicknameplain = "@".$nick;
 
-	                if ((strpos($item["body"], $nickname) === false) AND (strpos($item["body"], $nicknameplain) === false))
+	                if ((strpos($item["body"], $nickname) === false) && (strpos($item["body"], $nicknameplain) === false))
 	                        $item["body"] = $nickname." ".$item["body"];
                 }
 
@@ -728,7 +752,7 @@ function statusnet_prepare_body(&$a,&$b) {
                 $msgarr = plaintext($a, $item, $max_char, true, 7);
                 $msg = $msgarr["text"];
 
-                if (isset($msgarr["url"]))
+                if (isset($msgarr["url"]) && ($msgarr["type"] != "photo"))
                         $msg .= " ".$msgarr["url"];
 
                 if (isset($msgarr["image"]))
@@ -768,7 +792,7 @@ function statusnet_cron($a,$b) {
 
 	$abandon_limit = date("Y-m-d H:i:s", time() - $abandon_days * 86400);
 
-	$r = q("SELECT * FROM `pconfig` WHERE `cat` = 'statusnet' AND `k` = 'import' AND `v` = '1' ORDER BY RAND()");
+	$r = q("SELECT * FROM `pconfig` WHERE `cat` = 'statusnet' AND `k` = 'import' AND `v` ORDER BY RAND()");
 	if(count($r)) {
 		foreach($r as $rr) {
 			if ($abandon_days != 0) {
@@ -780,7 +804,7 @@ function statusnet_cron($a,$b) {
 			}
 
 			logger('statusnet: importing timeline from user '.$rr['uid']);
-			statusnet_fetchhometimeline($a, $rr["uid"]);
+			statusnet_fetchhometimeline($a, $rr["uid"], $rr["v"]);
 		}
 	}
 
@@ -854,6 +878,10 @@ function statusnet_fetchtimeline($a, $uid) {
 			$_REQUEST["source"] = $post->source;
 			$_REQUEST["extid"] = NETWORK_STATUSNET;
 
+			if (isset($post->id)) {
+				$_REQUEST['message_id'] = item_new_uri($a->get_hostname(), $uid, NETWORK_STATUSNET.":".$post->id);
+			}
+
 			//$_REQUEST["date"] = $post->created_at;
 
 			$_REQUEST["title"] = "";
@@ -898,37 +926,19 @@ function statusnet_fetch_contact($uid, $contact, $create_user) {
 	if ($contact->statusnet_profile_url == "")
 		return(-1);
 
-	// Check if the unique contact is existing
-	// To-Do: only update once a while
-	 $r = q("SELECT id FROM unique_contacts WHERE url='%s' LIMIT 1",
-			dbesc(normalise_link($contact->statusnet_profile_url)));
+	update_gcontact(array("url" => $contact->statusnet_profile_url,
+			"network" => NETWORK_STATUSNET, "photo" => $contact->profile_image_url,
+			"name" => $contact->name, "nick" => $contact->screen_name,
+			"location" => $contact->location, "about" => $contact->description,
+			"addr" => statusnet_address($contact), "generation" => 3));
 
-	if (count($r) == 0)
-		q("INSERT INTO unique_contacts (url, name, nick, avatar) VALUES ('%s', '%s', '%s', '%s')",
-			dbesc(normalise_link($contact->statusnet_profile_url)),
-			dbesc($contact->name),
-			dbesc($contact->screen_name),
-			dbesc($contact->profile_image_url));
-	else
-		q("UPDATE unique_contacts SET name = '%s', nick = '%s', avatar = '%s' WHERE url = '%s'",
-			dbesc($contact->name),
-			dbesc($contact->screen_name),
-			dbesc($contact->profile_image_url),
-			dbesc(normalise_link($contact->statusnet_profile_url)));
+	$r = q("SELECT * FROM `contact` WHERE `uid` = %d AND `alias` = '%s' AND `network` = '%s'LIMIT 1",
+		intval($uid), dbesc(normalise_link($contact->statusnet_profile_url)), dbesc(NETWORK_STATUSNET));
 
-	if (DB_UPDATE_VERSION >= "1177")
-		q("UPDATE `unique_contacts` SET `location` = '%s', `about` = '%s' WHERE url = '%s'",
-			dbesc($contact->location),
-			dbesc($contact->description),
-			dbesc(normalise_link($contact->statusnet_profile_url)));
-
-	$r = q("SELECT * FROM `contact` WHERE `uid` = %d AND `alias` = '%s' LIMIT 1",
-		intval($uid), dbesc(normalise_link($contact->statusnet_profile_url)));
-
-	if(!count($r) AND !$create_user)
+	if(!count($r) && !$create_user)
 		return(0);
 
-	if (count($r) AND ($r[0]["readonly"] OR $r[0]["blocked"])) {
+	if (count($r) && ($r[0]["readonly"] || $r[0]["blocked"])) {
 		logger("statusnet_fetch_contact: Contact '".$r[0]["nick"]."' is blocked or readonly.", LOGGER_DEBUG);
 		return(-1);
 	}
@@ -937,8 +947,8 @@ function statusnet_fetch_contact($uid, $contact, $create_user) {
 		// create contact record
 		q("INSERT INTO `contact` ( `uid`, `created`, `url`, `nurl`, `addr`, `alias`, `notify`, `poll`,
 					`name`, `nick`, `photo`, `network`, `rel`, `priority`,
-					`writable`, `blocked`, `readonly`, `pending` )
-					VALUES ( %d, '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', %d, %d, %d, 0, 0, 0 ) ",
+					`location`, `about`, `writable`, `blocked`, `readonly`, `pending` )
+					VALUES ( %d, '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', %d, 0, 0, 0 ) ",
 			intval($uid),
 			dbesc(datetime_convert()),
 			dbesc($contact->statusnet_profile_url),
@@ -953,13 +963,15 @@ function statusnet_fetch_contact($uid, $contact, $create_user) {
 			dbesc(NETWORK_STATUSNET),
 			intval(CONTACT_IS_FRIEND),
 			intval(1),
+			dbesc($contact->location),
+			dbesc($contact->description),
 			intval(1)
 		);
 
-		$r = q("SELECT * FROM `contact` WHERE `alias` = '%s' AND `uid` = %d LIMIT 1",
+		$r = q("SELECT * FROM `contact` WHERE `alias` = '%s' AND `uid` = %d AND `network` = '%s' LIMIT 1",
 			dbesc($contact->statusnet_profile_url),
-			intval($uid)
-			);
+			intval($uid),
+			dbesc(NETWORK_STATUSNET));
 
 		if(! count($r))
 			return(false);
@@ -990,16 +1002,6 @@ function statusnet_fetch_contact($uid, $contact, $create_user) {
 			dbesc(datetime_convert()),
 			intval($contact_id)
 		);
-
-		if (DB_UPDATE_VERSION >= "1177")
-			q("UPDATE `contact` SET `location` = '%s',
-						`about` = '%s'
-					WHERE `id` = %d",
-				dbesc($contact->location),
-				dbesc($contact->description),
-				intval($contact_id)
-			);
-
 	} else {
 		// update profile photos once every two weeks as we have no notification of when they change.
 
@@ -1026,7 +1028,9 @@ function statusnet_fetch_contact($uid, $contact, $create_user) {
 						`nurl` = '%s',
 						`addr` = '%s',
 						`name` = '%s',
-						`nick` = '%s'
+						`nick` = '%s',
+						`location` = '%s',
+						`about` = '%s'
 					WHERE `id` = %d",
 				dbesc($photos[0]),
 				dbesc($photos[1]),
@@ -1039,17 +1043,10 @@ function statusnet_fetch_contact($uid, $contact, $create_user) {
 				dbesc(statusnet_address($contact)),
 				dbesc($contact->name),
 				dbesc($contact->screen_name),
+				dbesc($contact->location),
+				dbesc($contact->description),
 				intval($r[0]['id'])
 			);
-
-			if (DB_UPDATE_VERSION >= "1177")
-				q("UPDATE `contact` SET `location` = '%s',
-							`about` = '%s'
-						WHERE `id` = %d",
-					dbesc($contact->location),
-					dbesc($contact->description),
-					intval($r[0]['id'])
-				);
 		}
 	}
 
@@ -1188,7 +1185,7 @@ function statusnet_createpost($a, $uid, $post, $self, $create_user, $only_existi
 		$postarray['owner-link'] = $post->user->statusnet_profile_url;
 		$postarray['owner-avatar'] = $post->user->profile_image_url;
 	}
-	if(($contactid == 0) AND !$only_existing_contact)
+	if(($contactid == 0) && !$only_existing_contact)
 		$contactid = $self['id'];
 	elseif ($contactid <= 0)
 		return(array());
@@ -1274,7 +1271,7 @@ function statusnet_checknotification($a, $uid, $own_url, $top_item, $postarray) 
 	if(!count($own_user))
 		return;
 
-	// Is it me from statusnet?
+	// Is it me from GNU Social?
 	if (link_compare($own_user[0]["url"], $postarray['author-link']))
 		return;
 
@@ -1288,7 +1285,7 @@ function statusnet_checknotification($a, $uid, $own_url, $top_item, $postarray) 
 		foreach($myconv as $conv) {
 			// now if we find a match, it means we're in this conversation
 
-			if(!link_compare($conv['author-link'],$user[0]["url"]) AND !link_compare($conv['author-link'],$own_user[0]["url"]))
+			if(!link_compare($conv['author-link'],$user[0]["url"]) && !link_compare($conv['author-link'],$own_user[0]["url"]))
 				continue;
 
 			require_once('include/enotify.php');
@@ -1318,7 +1315,7 @@ function statusnet_checknotification($a, $uid, $own_url, $top_item, $postarray) 
 	}
 }
 
-function statusnet_fetchhometimeline($a, $uid) {
+function statusnet_fetchhometimeline($a, $uid, $mode = 1) {
 	$conversations = array();
 
 	$ckey    = get_pconfig($uid, 'statusnet', 'consumerkey');
@@ -1347,7 +1344,7 @@ function statusnet_fetchhometimeline($a, $uid) {
 	if(count($r)) {
 		$nick = $r[0]["nick"];
 	} else {
-		logger("statusnet_fetchhometimeline: Own statusnet contact not found for user ".$uid, LOGGER_DEBUG);
+		logger("statusnet_fetchhometimeline: Own GNU Social contact not found for user ".$uid, LOGGER_DEBUG);
 		return;
 	}
 
@@ -1371,68 +1368,69 @@ function statusnet_fetchhometimeline($a, $uid) {
 	$parameters = array("exclude_replies" => false, "trim_user" => false, "contributor_details" => true, "include_rts" => true);
 	//$parameters["count"] = 200;
 
+	if ($mode == 1) {
+		// Fetching timeline
+		$lastid  = get_pconfig($uid, 'statusnet', 'lasthometimelineid');
+		//$lastid = 1;
 
-	// Fetching timeline
-	$lastid  = get_pconfig($uid, 'statusnet', 'lasthometimelineid');
-	//$lastid = 1;
+		$first_time = ($lastid == "");
 
-	$first_time = ($lastid == "");
+		if ($lastid <> "")
+			$parameters["since_id"] = $lastid;
 
-	if ($lastid <> "")
-		$parameters["since_id"] = $lastid;
+		$items = $connection->get('statuses/home_timeline', $parameters);
 
-	$items = $connection->get('statuses/home_timeline', $parameters);
+		if (!is_array($items)) {
+			if (is_object($items) && isset($items->error))
+				$errormsg = $items->error;
+			elseif (is_object($items))
+				$errormsg = print_r($items, true);
+			elseif (is_string($items) || is_float($items) || is_int($items))
+				$errormsg = $items;
+			else
+				$errormsg = "Unknown error";
 
-	if (!is_array($items)) {
-		if (is_object($items) AND isset($items->error))
-			$errormsg = $items->error;
-		elseif (is_object($items))
-			$errormsg = print_r($items, true);
-		elseif (is_string($items) OR is_float($items) OR is_int($items))
-			$errormsg = $items;
-		else
-			$errormsg = "Unknown error";
+			logger("statusnet_fetchhometimeline: Error fetching home timeline: ".$errormsg, LOGGER_DEBUG);
+			return;
+		}
 
-		logger("statusnet_fetchhometimeline: Error fetching home timeline: ".$errormsg, LOGGER_DEBUG);
-		return;
-	}
+		$posts = array_reverse($items);
 
-	$posts = array_reverse($items);
+		logger("statusnet_fetchhometimeline: Fetching timeline for user ".$uid." ".sizeof($posts)." items", LOGGER_DEBUG);
 
-	logger("statusnet_fetchhometimeline: Fetching timeline for user ".$uid." ".sizeof($posts)." items", LOGGER_DEBUG);
+		if (count($posts)) {
+			foreach ($posts as $post) {
 
-	if (count($posts)) {
-		foreach ($posts as $post) {
+				if ($post->id > $lastid)
+					$lastid = $post->id;
 
-			if ($post->id > $lastid)
-				$lastid = $post->id;
-
-			if ($first_time)
-				continue;
-
-			if (isset($post->statusnet_conversation_id)) {
-				if (!isset($conversations[$post->statusnet_conversation_id])) {
-					statusnet_complete_conversation($a, $uid, $self, $create_user, $nick, $post->statusnet_conversation_id);
-					$conversations[$post->statusnet_conversation_id] = $post->statusnet_conversation_id;
-				}
-			} else {
-				$postarray = statusnet_createpost($a, $uid, $post, $self, $create_user, true);
-
-				if (trim($postarray['body']) == "")
+				if ($first_time)
 					continue;
 
-				$item = item_store($postarray);
-				$postarray["id"] = $item;
+				if (isset($post->statusnet_conversation_id)) {
+					if (!isset($conversations[$post->statusnet_conversation_id])) {
+						statusnet_complete_conversation($a, $uid, $self, $create_user, $nick, $post->statusnet_conversation_id);
+						$conversations[$post->statusnet_conversation_id] = $post->statusnet_conversation_id;
+					}
+				} else {
+					$postarray = statusnet_createpost($a, $uid, $post, $self, $create_user, true);
 
-				logger('statusnet_fetchhometimeline: User '.$self["nick"].' posted home timeline item '.$item);
+					if (trim($postarray['body']) == "")
+						continue;
 
-				if ($item != 0)
-					statusnet_checknotification($a, $uid, $nick, $item, $postarray);
+					$item = item_store($postarray);
+					$postarray["id"] = $item;
+
+					logger('statusnet_fetchhometimeline: User '.$self["nick"].' posted home timeline item '.$item);
+
+					if ($item && !function_exists("check_item_notification"))
+						statusnet_checknotification($a, $uid, $nick, $item, $postarray);
+				}
+
 			}
-
 		}
+		set_pconfig($uid, 'statusnet', 'lasthometimelineid', $lastid);
 	}
-	set_pconfig($uid, 'statusnet', 'lasthometimelineid', $lastid);
 
 	// Fetching mentions
 	$lastid  = get_pconfig($uid, 'statusnet', 'lastmentionid');
@@ -1475,6 +1473,9 @@ function statusnet_fetchhometimeline($a, $uid) {
 					$postarray["id"] = $item;
 
 					logger('statusnet_fetchhometimeline: User '.$self["nick"].' posted mention timeline item '.$item);
+
+					if ($item && function_exists("check_item_notification"))
+						check_item_notification($item, $uid, NOTIFY_TAGSELF);
 				}
 			}
 
@@ -1487,7 +1488,7 @@ function statusnet_fetchhometimeline($a, $uid) {
 				$parent_id = $r[0]['parent'];
 			}
 
-			if ($item != 0) {
+			if (($item != 0) && !function_exists("check_item_notification")) {
 				require_once('include/enotify.php');
 				notification(array(
 					'type'         => NOTIFY_TAGSELF,
@@ -1518,6 +1519,7 @@ function statusnet_complete_conversation($a, $uid, $self, $create_user, $nick, $
 	$api     = get_pconfig($uid, 'statusnet', 'baseapi');
 	$otoken  = get_pconfig($uid, 'statusnet', 'oauthtoken');
 	$osecret = get_pconfig($uid, 'statusnet', 'oauthsecret');
+	$own_url = get_pconfig($uid, 'statusnet', 'own_url');
 
 	require_once('library/twitteroauth.php');
 
@@ -1541,7 +1543,7 @@ function statusnet_complete_conversation($a, $uid, $self, $create_user, $nick, $
 
 			logger('statusnet_complete_conversation: User '.$self["nick"].' posted home timeline item '.$item);
 
-			if ($item != 0)
+			if ($item && !function_exists("check_item_notification"))
 				statusnet_checknotification($a, $uid, $nick, $item, $postarray);
 		}
 	}
@@ -1586,7 +1588,7 @@ function statusnet_convertmsg($a, $body, $no_tags = false) {
 				$footerlink = "[url=".$expanded_url."]".$expanded_url."[/url]";
 
 				$body = str_replace($search, $footerlink, $body);
-			} elseif (($oembed_data->type == "photo") AND isset($oembed_data->url) AND !$dontincludemedia)
+			} elseif (($oembed_data->type == "photo") && isset($oembed_data->url) && !$dontincludemedia)
 				$body = str_replace($search, "[url=".$expanded_url."][img]".$oembed_data->url."[/img][/url]", $body);
 			elseif ($oembed_data->type != "link")
 				$body = str_replace($search,  "[url=".$expanded_url."]".$expanded_url."[/url]", $body);
@@ -1614,10 +1616,10 @@ function statusnet_convertmsg($a, $body, $no_tags = false) {
 		if ($footerurl != "")
 			$footer = add_page_info($footerurl);
 
-		if (($footerlink != "") AND (trim($footer) != "")) {
+		if (($footerlink != "") && (trim($footer) != "")) {
 			$removedlink = trim(str_replace($footerlink, "", $body));
 
-			if (($removedlink == "") OR strstr($body, $removedlink))
+			if (($removedlink == "") || strstr($body, $removedlink))
 				$body = $removedlink;
 
 			$body .= $footer;
@@ -1636,7 +1638,7 @@ function statusnet_convertmsg($a, $body, $no_tags = false) {
 				$str_tags .= ',';
 
 			if ($mtch[1] == "#") {
-				// Replacing the hash tags that are directed to the statusnet server with internal links
+				// Replacing the hash tags that are directed to the GNU Social server with internal links
 				$snhash = "#[url=".$mtch[2]."]".$mtch[3]."[/url]";
 				$frdchash = '#[url='.$a->get_baseurl().'/search?tag='.rawurlencode($mtch[3]).']'.$mtch[3].'[/url]';
 				$body = str_replace($snhash, $frdchash, $body);
@@ -1645,7 +1647,7 @@ function statusnet_convertmsg($a, $body, $no_tags = false) {
 			} else
 				$str_tags .= "@[url=".$mtch[2]."]".$mtch[3]."[/url]";
 				// To-Do:
-				// There is a problem with links with to statusnet groups, so these links are stored with "@" like friendica groups
+				// There is a problem with links with to GNU Social groups, so these links are stored with "@" like friendica groups
 				//$str_tags .= $mtch[1]."[url=".$mtch[2]."]".$mtch[3]."[/url]";
 		}
 	}

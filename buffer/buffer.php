@@ -1,7 +1,7 @@
 <?php
 /**
  * Name: Buffer Post Connector
- * Description: Post to Buffer (Linkedin, App.net, Google+, Facebook, Twitter)
+ * Description: Post to Buffer (Facebook, Google+, LinkedIn, Twitter)
  * Version: 0.2
  * Author: Michael Vogel <http://pirati.ca/profile/heluecht>
  */
@@ -210,21 +210,25 @@ function buffer_settings_post(&$a,&$b) {
 
 function buffer_post_local(&$a,&$b) {
 
-	if((! local_user()) || (local_user() != $b['uid']))
+	if (!local_user() || (local_user() != $b['uid'])) {
 		return;
+	}
 
 	$buffer_post   = intval(get_pconfig(local_user(),'buffer','post'));
 
 	$buffer_enable = (($buffer_post && x($_REQUEST,'buffer_enable')) ? intval($_REQUEST['buffer_enable']) : 0);
 
-	if($_REQUEST['api_source'] && intval(get_pconfig(local_user(),'buffer','post_by_default')))
+	if ($b['api_source'] && intval(get_pconfig(local_user(),'buffer','post_by_default'))) {
 		$buffer_enable = 1;
+	}
 
-	if(! $buffer_enable)
+	if (!$buffer_enable) {
 		return;
+	}
 
-	if(strlen($b['postopts']))
+	if (strlen($b['postopts'])) {
 		$b['postopts'] .= ',';
+	}
 
 	$b['postopts'] .= 'buffer';
 }
@@ -328,26 +332,25 @@ function buffer_send(&$a,&$b) {
 				if (isset($post["preview"]))
 					$post["preview"] = proxy_url($post["preview"]);
 
-				//if ($profile->service == "twitter") {
-				if ($includedlinks) {
-					if (isset($post["url"]))
-						$post["url"] = short_link($post["url"]);
-					if (isset($post["image"]))
-						$post["image"] = short_link($post["image"]);
-					if (isset($post["preview"]))
-						$post["preview"] = short_link($post["preview"]);
-				}
+				//if ($includedlinks) {
+				//	if (isset($post["url"]))
+				//		$post["url"] = short_link($post["url"]);
+				//	if (isset($post["image"]))
+				//		$post["image"] = short_link($post["image"]);
+				//	if (isset($post["preview"]))
+				//		$post["preview"] = short_link($post["preview"]);
+				//}
 
 				// Seems like a bug to me
 				// Buffer doesn't add links to Twitter and App.net (but pictures)
-				//if ($includedlinks AND isset($post["url"]))
-				if (($profile->service == "twitter") AND isset($post["url"]))
+				//if ($includedlinks && isset($post["url"]))
+				if (($profile->service == "twitter") && isset($post["url"]) && ($post["type"] != "photo"))
 					$post["text"] .= " ".$post["url"];
-				elseif (($profile->service == "appdotnet") AND isset($post["url"]) AND isset($post["title"])) {
+				elseif (($profile->service == "appdotnet") && isset($post["url"]) && isset($post["title"]) && ($post["type"] != "photo")) {
 					$post["title"] = shortenmsg($post["title"], 90);
 					$post["text"] = shortenmsg($post["text"], $limit - (24 + strlen($post["title"])));
 					$post["text"] .= "\n[".$post["title"]."](".$post["url"].")";
-				} elseif (($profile->service == "appdotnet") AND isset($post["url"]))
+				} elseif (($profile->service == "appdotnet") && isset($post["url"]) && ($post["type"] != "photo"))
 					$post["text"] .= " ".$post["url"];
 				elseif ($profile->service == "google")
 					$post["text"] .= html_entity_decode("&#x00A0;", ENT_QUOTES, 'UTF-8'); // Send a special blank to identify the post through the "fromgplus" addon
@@ -364,7 +367,7 @@ function buffer_send(&$a,&$b) {
 				if (isset($post["description"]))
 					$message["media[description]"] = $post["description"];
 
-				if (isset($post["url"]) AND ($post["type"] != "photo"))
+				if (isset($post["url"]) && ($post["type"] != "photo"))
 					$message["media[link]"] = $post["url"];
 
 				if (isset($post["image"])) {
@@ -377,6 +380,7 @@ function buffer_send(&$a,&$b) {
 					$message["media[thumbnail]"] = $post["preview"];
 
 				//print_r($message);
+				logger("buffer_send: data for message ".$b["id"].": ".print_r($message, true), LOGGER_DEBUG);
 				$ret = $buffer->go('/updates/create', $message);
 				logger("buffer_send: send message ".$b["id"]." result: ".print_r($ret, true), LOGGER_DEBUG);
 			}

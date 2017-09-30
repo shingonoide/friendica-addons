@@ -1,10 +1,13 @@
 <?php
 
-$a->strings["\"Blockem\" Settings"] = "Configuración de \"Blockem\"";
-$a->strings["Comma separated profile URLS to block"] = "Direcciones separadas por coma de los perfiles a bloquear";
-$a->strings["Submit"] = "Envíar";
-$a->strings["BLOCKEM Settings saved."] = "Configuracion Blockem guardada.";
-$a->strings["Blocked %s - Click to open/close"] = "%s bloqueado. Pulsa aquí para mostrar/ocultar";
-$a->strings["Unblock Author"] = "Desbloquear Autor";
-$a->strings["Block Author"] = "Bloquear Autor";
-$a->strings["blockem settings updated"] = "Configuración de Blockem actualizada";
+if(! function_exists("string_plural_select_es")) {
+function string_plural_select_es($n){
+	return ($n != 1);;
+}}
+;
+$a->strings["\"Superblock\""] = "";
+$a->strings["Comma separated profile URLS to block"] = "Perfil de URLS a bloque separado por comas";
+$a->strings["Save Settings"] = "Guardar configuración";
+$a->strings["SUPERBLOCK Settings saved."] = "";
+$a->strings["Block Completely"] = "Bloquear completamente";
+$a->strings["superblock settings updated"] = "";

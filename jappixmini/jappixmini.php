@@ -269,7 +269,7 @@ function jappixmini_settings(&$a, &$s) {
     if ($server == "")
 	$server = get_config("jappixmini", "default_server");
 
-    if (($username == "") and get_config("jappixmini", "default_user"))
+    if (($username == "") && get_config("jappixmini", "default_user"))
 	$username = $a->user["nickname"];
 
     $info_text = get_config("jappixmini", "infotext");
@@ -439,9 +439,12 @@ function jappixmini_script(&$a,&$s) {
 
     if(! local_user()) return;
 
+    if ($_GET["mode"] == "minimal")
+	return;
+
     $activate = get_pconfig(local_user(),'jappixmini','activate');
     $dontinsertchat = get_pconfig(local_user(), 'jappixmini','dontinsertchat');
-    if (!$activate or $dontinsertchat) return;
+    if (!$activate || $dontinsertchat) return;
 
     $a->page['htmlhead'] .= '<script type="text/javascript" src="' . $a->get_baseurl() . '/addon/jappixmini/jappix/php/get.php?t=js&amp;g=mini.xml"></script>'."\r\n";
     $a->page['htmlhead'] .= '<script type="text/javascript" src="' . $a->get_baseurl() . '/addon/jappixmini/jappix/php/get.php?t=js&amp;f=presence.js~caps.js~name.js~roster.js"></script>'."\r\n";
@@ -547,7 +550,8 @@ function jappixmini_cron(&$a, $d) {
 		$uid = $row["uid"];
 
 		// for each user, go through list of contacts
-		$contacts = q("SELECT * FROM `contact` WHERE `uid`=%d AND ((LENGTH(`dfrn-id`) AND LENGTH(`pubkey`)) OR (LENGTH(`issued-id`) AND LENGTH(`prvkey`)))", intval($uid));
+		$contacts = q("SELECT * FROM `contact` WHERE `uid`=%d AND ((LENGTH(`dfrn-id`) AND LENGTH(`pubkey`)) OR (LENGTH(`issued-id`) AND LENGTH(`prvkey`))) AND `network` = '%s'",
+			intval($uid), dbesc(NETWORK_DFRN));
 		foreach ($contacts as $contact_row) {
 			$request = $contact_row["request"];
 			if (!$request) continue;

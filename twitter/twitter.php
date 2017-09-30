@@ -1,7 +1,7 @@
 <?php
 /**
  * Name: Twitter Connector
- * Description: Relay public postings to a connected Twitter account
+ * Description: Bidirectional (posting, relaying and reading) connector for Twitter.
  * Version: 1.0.4
  * Author: Tobias Diekershoff <https://f.diekershoff.de/profile/tobias>
  * Author: Michael Vogel <https://pirati.ca/profile/heluecht>
@@ -32,7 +32,7 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
- 
+
 /*   Twitter Plugin for Friendica
  *
  *   Author: Tobias Diekershoff
@@ -60,6 +60,9 @@
  *     Requirements: PHP5, curl [Slinky library]
  */
 
+require_once('include/enotify.php');
+require_once("include/socgraph.php");
+
 define('TWITTER_DEFAULT_POLL_INTERVAL', 5); // given in minutes
 
 function twitter_install() {
@@ -74,6 +77,7 @@ function twitter_install() {
 	register_hook('follow', 'addon/twitter/twitter.php', 'twitter_follow');
 	register_hook('expire', 'addon/twitter/twitter.php', 'twitter_expire');
 	register_hook('prepare_body', 'addon/twitter/twitter.php', 'twitter_prepare_body');
+	register_hook('check_item_notification','addon/twitter/twitter.php', 'twitter_check_item_notification');
 	logger("installed twitter");
 }
 
@@ -89,6 +93,7 @@ function twitter_uninstall() {
 	unregister_hook('follow', 'addon/twitter/twitter.php', 'twitter_follow');
 	unregister_hook('expire', 'addon/twitter/twitter.php', 'twitter_expire');
 	unregister_hook('prepare_body', 'addon/twitter/twitter.php', 'twitter_prepare_body');
+	unregister_hook('check_item_notification','addon/twitter/twitter.php', 'twitter_check_item_notification');
 
 	// old setting - remove only
 	unregister_hook('post_local_end', 'addon/twitter/twitter.php', 'twitter_post_hook');
@@ -97,11 +102,23 @@ function twitter_uninstall() {
 
 }
 
+function twitter_check_item_notification($a, &$notification_data) {
+	$own_id = get_pconfig($notification_data["uid"], 'twitter', 'own_id');
+
+	$own_user = q("SELECT `url` FROM `contact` WHERE `uid` = %d AND `alias` = '%s' LIMIT 1",
+			intval($notification_data["uid"]),
+			dbesc("twitter::".$own_id)
+		);
+
+	if ($own_user)
+		$notification_data["profiles"][] = $own_user[0]["url"];
+}
+
 function twitter_follow($a, &$contact) {
 
 	logger("twitter_follow: Check if contact is twitter contact. ".$contact["url"], LOGGER_DEBUG);
 
-	if (!strstr($contact["url"], "://twitter.com") AND !strstr($contact["url"], "@twitter.com"))
+	if (!strstr($contact["url"], "://twitter.com") && !strstr($contact["url"], "@twitter.com"))
 		return;
 
 	// contact seems to be a twitter contact, so continue
@@ -144,7 +161,7 @@ function twitter_jot_nets(&$a,&$b) {
 	if(intval($tw_post) == 1) {
 		$tw_defpost = get_pconfig(local_user(),'twitter','post_by_default');
 		$selected = ((intval($tw_defpost) == 1) ? ' checked="checked" ' : '');
-		$b .= '<div class="profile-jot-net"><input type="checkbox" name="twitter_enable"' . $selected . ' value="1" /> ' 
+		$b .= '<div class="profile-jot-net"><input type="checkbox" name="twitter_enable"' . $selected . ' value="1" /> '
 			. t('Post to Twitter') . '</div>';
 	}
 }
@@ -310,34 +327,40 @@ function twitter_settings(&$a,&$s) {
 			$s .= '<label id="twitter-disconnect-label" for="twitter-disconnect">'. t('Clear OAuth configuration') .'</label>';
 			$s .= '<input id="twitter-disconnect" type="checkbox" name="twitter-disconnect" value="1" />';
 			$s .= '</div><div class="clear"></div>';
-			$s .= '<div class="settings-submit-wrapper" ><input type="submit" name="twitter-submit" class="settings-submit" value="' . t('Save Settings') . '" /></div>'; 
+			$s .= '<div class="settings-submit-wrapper" ><input type="submit" name="twitter-submit" class="settings-submit" value="' . t('Save Settings') . '" /></div>';
 		}
 	}
 	$s .= '</div><div class="clear"></div>';
 }
 
 
-function twitter_post_local(&$a,&$b) {
+function twitter_post_local(&$a, &$b) {
 
-	if($b['edit'])
+	if ($b['edit']) {
 		return;
-
-	if((local_user()) && (local_user() == $b['uid']) && (! $b['private']) && (! $b['parent']) ) {
-
-		$twitter_post = intval(get_pconfig(local_user(),'twitter','post'));
-		$twitter_enable = (($twitter_post && x($_REQUEST,'twitter_enable')) ? intval($_REQUEST['twitter_enable']) : 0);
-
-		// if API is used, default to the chosen settings
-		if($_REQUEST['api_source'] && intval(get_pconfig(local_user(),'twitter','post_by_default')))
-			$twitter_enable = 1;
-
-	if(! $twitter_enable)
-		return;
-
-	if(strlen($b['postopts']))
-		$b['postopts'] .= ',';
-		$b['postopts'] .= 'twitter';
 	}
+
+	if (!local_user() || (local_user() != $b['uid'])) {
+		return;
+	}
+
+	$twitter_post = intval(get_pconfig(local_user(), 'twitter', 'post'));
+	$twitter_enable = (($twitter_post && x($_REQUEST, 'twitter_enable')) ? intval($_REQUEST['twitter_enable']) : 0);
+
+	// if API is used, default to the chosen settings
+	if ($b['api_source'] && intval(get_pconfig(local_user(), 'twitter', 'post_by_default'))) {
+		$twitter_enable = 1;
+	}
+
+	if (!$twitter_enable) {
+		return;
+	}
+
+	if (strlen($b['postopts'])) {
+		$b['postopts'] .= ',';
+	}
+
+	$b['postopts'] .= 'twitter';
 }
 
 function twitter_action($a, $uid, $pid, $action) {
@@ -359,7 +382,7 @@ function twitter_action($a, $uid, $pid, $action) {
 
 	switch ($action) {
 		case "delete":
-			$result = $cb->statuses_destroy($post);
+			// To-Do: $result = $cb->statuses_destroy($post);
 			break;
 		case "like":
 			$result = $cb->favorites_create($post);
@@ -388,7 +411,7 @@ function twitter_post_hook(&$a,&$b) {
 		logger("twitter_post_hook: parameter ".print_r($b, true), LOGGER_DATA);
 
 		// Looking if its a reply to a twitter post
-		if ((substr($b["parent-uri"], 0, 9) != "twitter::") AND (substr($b["extid"], 0, 9) != "twitter::") AND (substr($b["thr-parent"], 0, 9) != "twitter::")) {
+		if ((substr($b["parent-uri"], 0, 9) != "twitter::") && (substr($b["extid"], 0, 9) != "twitter::") && (substr($b["thr-parent"], 0, 9) != "twitter::")) {
 			logger("twitter_post_hook: no twitter post ".$b["parent"]);
 			return;
 		}
@@ -411,18 +434,18 @@ function twitter_post_hook(&$a,&$b) {
 		$nicknameplain = "@".$nicknameplain;
 
 		logger("twitter_post_hook: comparing ".$nickname." and ".$nicknameplain." with ".$b["body"], LOGGER_DEBUG);
-		if ((strpos($b["body"], $nickname) === false) AND (strpos($b["body"], $nicknameplain) === false))
+		if ((strpos($b["body"], $nickname) === false) && (strpos($b["body"], $nicknameplain) === false))
 			$b["body"] = $nickname." ".$b["body"];
 
 		logger("twitter_post_hook: parent found ".print_r($orig_post, true), LOGGER_DATA);
 	} else {
 		$iscomment = false;
 
-		if($b['private'] OR !strstr($b['postopts'],'twitter'))
+		if($b['private'] || !strstr($b['postopts'],'twitter'))
 			return;
 	}
 
-	if (($b['verb'] == ACTIVITY_POST) AND $b['deleted'])
+	if (($b['verb'] == ACTIVITY_POST) && $b['deleted'])
 		twitter_action($a, $b["uid"], substr($orig_post["uri"], 9), "delete");
 
 	if($b['verb'] == ACTIVITY_LIKE) {
@@ -470,18 +493,19 @@ function twitter_post_hook(&$a,&$b) {
 		$msgarr = plaintext($a, $b, $max_char, true, 8);
 		$msg = $msgarr["text"];
 
-		if (($msg == "") AND isset($msgarr["title"]))
+		if (($msg == "") && isset($msgarr["title"]))
 			$msg = shortenmsg($msgarr["title"], $max_char - 50);
 
 		$image = "";
 
-		if (isset($msgarr["url"]))
+		if (isset($msgarr["url"]) && ($msgarr["type"] != "photo"))
 			$msg .= "\n".$msgarr["url"];
-		elseif (isset($msgarr["image"]) AND ($msgarr["type"] != "video"))
+
+		if (isset($msgarr["image"]) && ($msgarr["type"] != "video"))
 			$image = $msgarr["image"];
 
 		// and now tweet it :-)
-		if(strlen($msg) and ($image != "")) {
+		if(strlen($msg) && ($image != "")) {
 			$img_str = fetch_url($image);
 
 			$tempfile = tempnam(get_temppath(), "cache");
@@ -510,7 +534,7 @@ function twitter_post_hook(&$a,&$b) {
 			if ($result->source)
 				set_config("twitter", "application_name", strip_tags($result->source));
 
-			if ($result->errors OR $result->error) {
+			if ($result->errors || $result->error) {
 				logger('Send to Twitter failed: "' . print_r($result->errors, true) . '"');
 
 				// Workaround: Remove the picture link so that the post can be reposted without it
@@ -526,7 +550,7 @@ function twitter_post_hook(&$a,&$b) {
 			}
 		}
 
-		if(strlen($msg) and ($image == "")) {
+		if(strlen($msg) && ($image == "")) {
 			$url = 'statuses/update';
 			$post = array('status' => $msg);
 
@@ -603,11 +627,11 @@ function twitter_cron($a,$b) {
 	}
 	logger('twitter: cron_start');
 
-	$r = q("SELECT * FROM `pconfig` WHERE `cat` = 'twitter' AND `k` = 'mirror_posts' AND `v` = '1' ORDER BY RAND()");
+	$r = q("SELECT * FROM `pconfig` WHERE `cat` = 'twitter' AND `k` = 'mirror_posts' AND `v` = '1'");
 	if(count($r)) {
 		foreach($r as $rr) {
 			logger('twitter: fetching for user '.$rr['uid']);
-			twitter_fetchtimeline($a, $rr['uid']);
+			proc_run(PRIORITY_MEDIUM, "addon/twitter/twitter_sync.php", 1, (int)$rr['uid']);
 		}
 	}
 
@@ -617,7 +641,7 @@ function twitter_cron($a,$b) {
 
 	$abandon_limit = date("Y-m-d H:i:s", time() - $abandon_days * 86400);
 
-	$r = q("SELECT * FROM `pconfig` WHERE `cat` = 'twitter' AND `k` = 'import' AND `v` = '1' ORDER BY RAND()");
+	$r = q("SELECT * FROM `pconfig` WHERE `cat` = 'twitter' AND `k` = 'import' AND `v` = '1'");
 	if(count($r)) {
 		foreach($r as $rr) {
 			if ($abandon_days != 0) {
@@ -629,8 +653,7 @@ function twitter_cron($a,$b) {
 			}
 
 			logger('twitter: importing timeline from user '.$rr['uid']);
-			twitter_fetchhometimeline($a, $rr["uid"]);
-
+			proc_run(PRIORITY_MEDIUM, "addon/twitter/twitter_sync.php", 2, (int)$rr['uid']);
 /*
 			// To-Do
 			// check for new contacts once a day
@@ -661,7 +684,15 @@ function twitter_expire($a,$b) {
 	if ($days == 0)
 		return;
 
-	$r = q("DELETE FROM `item` WHERE `deleted` AND `network` = '%s'", dbesc(NETWORK_TWITTER));
+	if (method_exists('dba', 'delete')) {
+		$r = dba::select('item', array('id'), array('deleted' => true, 'network' => NETWORK_TWITTER));
+		while ($row = dba::fetch($r)) {
+			dba::delete('item', array('id' => $row['id']));
+		}
+		dba::close($r);
+	} else {
+		$r = q("DELETE FROM `item` WHERE `deleted` AND `network` = '%s'", dbesc(NETWORK_TWITTER));
+	}
 
 	require_once("include/items.php");
 
@@ -699,7 +730,7 @@ function twitter_prepare_body(&$a,&$b) {
 			$nickname = "@[url=".$orig_post["author-link"]."]".$nicknameplain."[/url]";
 			$nicknameplain = "@".$nicknameplain;
 
-			if ((strpos($item["body"], $nickname) === false) AND (strpos($item["body"], $nicknameplain) === false))
+			if ((strpos($item["body"], $nickname) === false) && (strpos($item["body"], $nicknameplain) === false))
 				$item["body"] = $nickname." ".$item["body"];
 		}
 
@@ -707,7 +738,7 @@ function twitter_prepare_body(&$a,&$b) {
 		$msgarr = plaintext($a, $item, $max_char, true, 8);
 		$msg = $msgarr["text"];
 
-		if (isset($msgarr["url"]))
+		if (isset($msgarr["url"]) && ($msgarr["type"] != "photo"))
 			$msg .= " ".$msgarr["url"];
 
 		if (isset($msgarr["image"]))
@@ -715,6 +746,52 @@ function twitter_prepare_body(&$a,&$b) {
 
                 $b['html'] = nl2br(htmlspecialchars($msg));
 	}
+}
+
+/**
+ * @brief Build the item array for the mirrored post
+ *
+ * @param object $a Application class
+ * @param integer $uid User id
+ * @param object $post Twitter object with the post
+ *
+ * @return array item data to be posted
+ */
+function twitter_do_mirrorpost($a, $uid, $post) {
+	$datarray["type"] = "wall";
+	$datarray["api_source"] = true;
+	$datarray["profile_uid"] = $uid;
+	$datarray["extid"] = NETWORK_TWITTER;
+	$datarray['message_id'] = item_new_uri($a->get_hostname(), $uid, NETWORK_TWITTER.":".$post->id);
+	$datarray['object'] = json_encode($post);
+	$datarray["title"] = "";
+
+	if (is_object($post->retweeted_status)) {
+		// We don't support nested shares, so we mustn't show quotes as shares on retweets
+		$item = twitter_createpost($a, $uid, $post->retweeted_status, array('id' => 0), false, false, true);
+
+		$datarray['body'] = "\n".share_header($item['author-name'], $item['author-link'], $item['author-avatar'], "",
+					$item['created'], $item['plink']);
+
+		$datarray['body'] .= $item['body'].'[/share]';
+	} else {
+		$item = twitter_createpost($a, $uid, $post, array('id' => 0), false, false, false);
+
+		$datarray['body'] = $item['body'];
+	}
+
+	$datarray["source"] = $item['app'];
+	$datarray["verb"] = $item['verb'];
+
+	if (isset($item["location"])) {
+		$datarray["location"] = $item["location"];
+	}
+
+	if (isset($item["coord"])) {
+		$datarray["coord"] = $item["coord"];
+	}
+
+	return $datarray;
 }
 
 function twitter_fetchtimeline($a, $uid) {
@@ -738,7 +815,7 @@ function twitter_fetchtimeline($a, $uid) {
 	require_once('library/twitteroauth.php');
 	$connection = new TwitterOAuth($ckey,$csecret,$otoken,$osecret);
 
-	$parameters = array("exclude_replies" => true, "trim_user" => false, "contributor_details" => true, "include_rts" => true);
+	$parameters = array("exclude_replies" => true, "trim_user" => false, "contributor_details" => true, "include_rts" => true, "tweet_mode" => "extended");
 
 	$first_time = ($lastid == "");
 
@@ -754,104 +831,22 @@ function twitter_fetchtimeline($a, $uid) {
 
 	if (count($posts)) {
 	    foreach ($posts as $post) {
-		if ($post->id_str > $lastid)
+		if ($post->id_str > $lastid) {
 			$lastid = $post->id_str;
+			set_pconfig($uid, 'twitter', 'lastid', $lastid);
+		}
 
 		if ($first_time)
 			continue;
 
 		if (!stristr($post->source, $application_name)) {
+
 			$_SESSION["authenticated"] = true;
 			$_SESSION["uid"] = $uid;
 
-			unset($_REQUEST);
-			$_REQUEST["type"] = "wall";
-			$_REQUEST["api_source"] = true;
-			$_REQUEST["profile_uid"] = $uid;
-			//$_REQUEST["source"] = "Twitter";
-			$_REQUEST["source"] = $post->source;
-			$_REQUEST["extid"] = NETWORK_TWITTER;
+			$_REQUEST = twitter_do_mirrorpost($a, $uid, $post);
 
-			//$_REQUEST["date"] = $post->created_at;
-
-			$_REQUEST["title"] = "";
-
-			if (is_object($post->retweeted_status)) {
-
-				$_REQUEST['body'] = $post->retweeted_status->text;
-
-				$picture = "";
-
-				// media
-				if (is_array($post->retweeted_status->entities->media)) {
-					foreach($post->retweeted_status->entities->media AS $media) {
-						switch($media->type) {
-							case 'photo':
-								//$_REQUEST['body'] = str_replace($media->url, "\n\n[img]".$media->media_url_https."[/img]\n", $_REQUEST['body']);
-								//$has_picture = true;
-								$_REQUEST['body'] = str_replace($media->url, "", $_REQUEST['body']);
-								$picture = $media->media_url_https;
-								break;
-						}
-					}
-				}
-
-				$converted = twitter_expand_entities($a, $_REQUEST['body'], $post->retweeted_status, true, $picture);
-				$_REQUEST['body'] = $converted["body"];
-
-				if (function_exists("share_header"))
-					$_REQUEST['body'] = share_header($post->retweeted_status->user->name, "https://twitter.com/".$post->retweeted_status->user->screen_name,
-									$post->retweeted_status->user->profile_image_url_https, "",
-									datetime_convert('UTC','UTC',$post->retweeted_status->created_at),
-									"https://twitter.com/".$post->retweeted_status->user->screen_name."/status/".$post->retweeted_status->id_str).
-								$_REQUEST['body'];
-				else
-					$_REQUEST['body'] = "[share author='".$post->retweeted_status->user->name.
-						"' profile='https://twitter.com/".$post->retweeted_status->user->screen_name.
-						"' avatar='".$post->retweeted_status->user->profile_image_url_https.
-						"' posted='".datetime_convert('UTC','UTC',$post->retweeted_status->created_at).
-						"' link='https://twitter.com/".$post->retweeted_status->user->screen_name."/status/".$post->retweeted_status->id_str."']".
-						$_REQUEST['body'];
-
-				$_REQUEST['body'] .= "[/share]";
-			} else {
-				$_REQUEST["body"] = $post->text;
-
-				$picture = "";
-
-				if (is_array($post->entities->media)) {
-					foreach($post->entities->media AS $media) {
-						switch($media->type) {
-							case 'photo':
-								//$_REQUEST['body'] = str_replace($media->url, "\n\n[img]".$media->media_url_https."[/img]\n", $_REQUEST['body']);
-								//$has_picture = true;
-								$_REQUEST['body'] = str_replace($media->url, "", $_REQUEST['body']);
-								$picture = $media->media_url_https;
-								break;
-						}
-					}
-				}
-
-				$converted = twitter_expand_entities($a, $_REQUEST["body"], $post, true, $picture);
-				$_REQUEST['body'] = $converted["body"];
-			}
-
-			if (is_string($post->place->name))
-				$_REQUEST["location"] = $post->place->name;
-
-			if (is_string($post->place->full_name))
-				$_REQUEST["location"] = $post->place->full_name;
-
-			if (is_array($post->geo->coordinates))
-				$_REQUEST["coord"] = $post->geo->coordinates[0]." ".$post->geo->coordinates[1];
-
-			if (is_array($post->coordinates->coordinates))
-				$_REQUEST["coord"] = $post->coordinates->coordinates[1]." ".$post->coordinates->coordinates[0];
-
-			//print_r($_REQUEST);
 			logger('twitter: posting for user '.$uid);
-
-//			require_once('mod/item.php');
 
 			item_post($a);
 		}
@@ -876,7 +871,7 @@ function twitter_queue_hook(&$a,&$b) {
 
 		logger('twitter_queue: run');
 
-		$r = q("SELECT `user`.* FROM `user` LEFT JOIN `contact` on `contact`.`uid` = `user`.`uid` 
+		$r = q("SELECT `user`.* FROM `user` LEFT JOIN `contact` on `contact`.`uid` = `user`.`uid`
 			WHERE `contact`.`self` = 1 AND `contact`.`id` = %d LIMIT 1",
 			intval($x['cid'])
 		);
@@ -892,7 +887,7 @@ function twitter_queue_hook(&$a,&$b) {
 
 		$success = false;
 
-		if ($ckey AND $csecret AND $otoken AND $osecret) {
+		if ($ckey && $csecret && $otoken && $osecret) {
 
 			logger('twitter_queue: able to post');
 
@@ -925,59 +920,48 @@ function twitter_queue_hook(&$a,&$b) {
 	}
 }
 
-function twitter_fetch_contact($uid, $contact, $create_user) {
+function twitter_fix_avatar($avatar) {
 	require_once("include/Photo.php");
+
+	$new_avatar = str_replace("_normal.", ".", $avatar);
+
+	$info = get_photo_info($new_avatar);
+	if (!$info)
+		$new_avatar = $avatar;
+
+	return $new_avatar;
+}
+
+function twitter_fetch_contact($uid, $contact, $create_user) {
 
 	if ($contact->id_str == "")
 		return(-1);
 
-	$avatar = str_replace("_normal.", ".", $contact->profile_image_url_https);
+	$avatar = twitter_fix_avatar($contact->profile_image_url_https);
 
-	$info = get_photo_info($avatar);
-	if (!$info)
-		$avatar = $contact->profile_image_url_https;
-
-	// Check if the unique contact is existing
-	// To-Do: only update once a while
-	$r = q("SELECT id FROM unique_contacts WHERE url='%s' LIMIT 1",
-			dbesc(normalise_link("https://twitter.com/".$contact->screen_name)));
-
-	if (count($r) == 0)
-		q("INSERT INTO unique_contacts (url, name, nick, avatar) VALUES ('%s', '%s', '%s', '%s')",
-			dbesc(normalise_link("https://twitter.com/".$contact->screen_name)),
-			dbesc($contact->name),
-			dbesc($contact->screen_name),
-			dbesc($avatar));
-	else
-		q("UPDATE unique_contacts SET name = '%s', nick = '%s', avatar = '%s' WHERE url = '%s'",
-			dbesc($contact->name),
-			dbesc($contact->screen_name),
-			dbesc($avatar),
-			dbesc(normalise_link("https://twitter.com/".$contact->screen_name)));
-
-	if (DB_UPDATE_VERSION >= "1177")
-		q("UPDATE `unique_contacts` SET `location` = '%s', `about` = '%s' WHERE url = '%s'",
-			dbesc($contact->location),
-			dbesc($contact->description),
-			dbesc(normalise_link("https://twitter.com/".$contact->screen_name)));
+	update_gcontact(array("url" => "https://twitter.com/".$contact->screen_name,
+			"network" => NETWORK_TWITTER, "photo" => $avatar,  "hide" => true,
+			"name" => $contact->name, "nick" => $contact->screen_name,
+			"location" => $contact->location, "about" => $contact->description,
+			"addr" => $contact->screen_name."@twitter.com", "generation" => 2));
 
 	$r = q("SELECT * FROM `contact` WHERE `uid` = %d AND `alias` = '%s' LIMIT 1",
 		intval($uid), dbesc("twitter::".$contact->id_str));
 
-	if(!count($r) AND !$create_user)
+	if(!count($r) && !$create_user)
 		return(0);
 
-	if (count($r) AND ($r[0]["readonly"] OR $r[0]["blocked"])) {
+	if (count($r) && ($r[0]["readonly"] || $r[0]["blocked"])) {
 		logger("twitter_fetch_contact: Contact '".$r[0]["nick"]."' is blocked or readonly.", LOGGER_DEBUG);
 		return(-1);
 	}
 
 	if(!count($r)) {
 		// create contact record
-		q("INSERT INTO `contact` ( `uid`, `created`, `url`, `nurl`, `addr`, `alias`, `notify`, `poll`,
+		q("INSERT INTO `contact` (`uid`, `created`, `url`, `nurl`, `addr`, `alias`, `notify`, `poll`,
 					`name`, `nick`, `photo`, `network`, `rel`, `priority`,
-					`writable`, `blocked`, `readonly`, `pending` )
-					VALUES ( %d, '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', %d, %d, %d, 0, 0, 0) ",
+					`location`, `about`, `writable`, `blocked`, `readonly`, `pending`)
+					VALUES (%d, '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', %d, 0, 0, 0)",
 			intval($uid),
 			dbesc(datetime_convert()),
 			dbesc("https://twitter.com/".$contact->screen_name),
@@ -992,6 +976,8 @@ function twitter_fetch_contact($uid, $contact, $create_user) {
 			dbesc(NETWORK_TWITTER),
 			intval(CONTACT_IS_FRIEND),
 			intval(1),
+			dbesc($contact->location),
+			dbesc($contact->description),
 			intval(1)
 		);
 
@@ -1016,33 +1002,25 @@ function twitter_fetch_contact($uid, $contact, $create_user) {
 
 		require_once("Photo.php");
 
-		$photos = import_profile_photo($avatar,$uid,$contact_id);
+		$photos = import_profile_photo($avatar, $uid, $contact_id, true);
 
-		q("UPDATE `contact` SET `photo` = '%s',
-					`thumb` = '%s',
-					`micro` = '%s',
-					`name-date` = '%s',
-					`uri-date` = '%s',
-					`avatar-date` = '%s'
-				WHERE `id` = %d",
-			dbesc($photos[0]),
-			dbesc($photos[1]),
-			dbesc($photos[2]),
-			dbesc(datetime_convert()),
-			dbesc(datetime_convert()),
-			dbesc(datetime_convert()),
-			intval($contact_id)
-		);
-
-		if (DB_UPDATE_VERSION >= "1177")
-			q("UPDATE `contact` SET `location` = '%s',
-						`about` = '%s'
+		if ($photos) {
+			q("UPDATE `contact` SET `photo` = '%s',
+						`thumb` = '%s',
+						`micro` = '%s',
+						`name-date` = '%s',
+						`uri-date` = '%s',
+							`avatar-date` = '%s'
 					WHERE `id` = %d",
-				dbesc($contact->location),
-				dbesc($contact->description),
+				dbesc($photos[0]),
+				dbesc($photos[1]),
+				dbesc($photos[2]),
+				dbesc(datetime_convert()),
+				dbesc(datetime_convert()),
+				dbesc(datetime_convert()),
 				intval($contact_id)
 			);
-
+		}
 	} else {
 		// update profile photos once every two weeks as we have no notification of when they change.
 
@@ -1057,42 +1035,39 @@ function twitter_fetch_contact($uid, $contact, $create_user) {
 
 			require_once("Photo.php");
 
-			$photos = import_profile_photo($avatar, $uid, $r[0]['id']);
+			$photos = import_profile_photo($avatar, $uid, $r[0]['id'], true);
 
-			q("UPDATE `contact` SET `photo` = '%s',
-						`thumb` = '%s',
-						`micro` = '%s',
-						`name-date` = '%s',
-						`uri-date` = '%s',
-						`avatar-date` = '%s',
-						`url` = '%s',
-						`nurl` = '%s',
-						`addr` = '%s',
-						`name` = '%s',
-						`nick` = '%s'
-					WHERE `id` = %d",
-				dbesc($photos[0]),
-				dbesc($photos[1]),
-				dbesc($photos[2]),
-				dbesc(datetime_convert()),
-				dbesc(datetime_convert()),
-				dbesc(datetime_convert()),
-				dbesc("https://twitter.com/".$contact->screen_name),
-				dbesc(normalise_link("https://twitter.com/".$contact->screen_name)),
-				dbesc($contact->screen_name."@twitter.com"),
-				dbesc($contact->name),
-				dbesc($contact->screen_name),
-				intval($r[0]['id'])
-			);
-
-			if (DB_UPDATE_VERSION >= "1177")
-				q("UPDATE `contact` SET `location` = '%s',
+			if ($photos) {
+				q("UPDATE `contact` SET `photo` = '%s',
+							`thumb` = '%s',
+							`micro` = '%s',
+							`name-date` = '%s',
+							`uri-date` = '%s',
+							`avatar-date` = '%s',
+							`url` = '%s',
+							`nurl` = '%s',
+							`addr` = '%s',
+							`name` = '%s',
+							`nick` = '%s',
+							`location` = '%s',
 							`about` = '%s'
 						WHERE `id` = %d",
+					dbesc($photos[0]),
+					dbesc($photos[1]),
+					dbesc($photos[2]),
+					dbesc(datetime_convert()),
+					dbesc(datetime_convert()),
+					dbesc(datetime_convert()),
+					dbesc("https://twitter.com/".$contact->screen_name),
+					dbesc(normalise_link("https://twitter.com/".$contact->screen_name)),
+					dbesc($contact->screen_name."@twitter.com"),
+					dbesc($contact->name),
+					dbesc($contact->screen_name),
 					dbesc($contact->location),
 					dbesc($contact->description),
 					intval($r[0]['id'])
 				);
+			}
 		}
 	}
 
@@ -1144,6 +1119,8 @@ function twitter_expand_entities($a, $body, $item, $no_tags = false, $picture) {
 
 	$tags = "";
 
+	$plain = $body;
+
 	if (isset($item->entities->urls)) {
 		$type = "";
 		$footerurl = "";
@@ -1151,14 +1128,17 @@ function twitter_expand_entities($a, $body, $item, $no_tags = false, $picture) {
 		$footer = "";
 
 		foreach ($item->entities->urls AS $url) {
-			if ($url->url AND $url->expanded_url AND $url->display_url) {
+
+			$plain = str_replace($url->url, '', $plain);
+
+			if ($url->url && $url->expanded_url && $url->display_url) {
 
 				$expanded_url = original_url($url->expanded_url);
 
 				$oembed_data = oembed_fetch_url($expanded_url);
 
 				// Quickfix: Workaround for URL with "[" and "]" in it
-				if (strpos($expanded_url, "[") OR strpos($expanded_url, "]"))
+				if (strpos($expanded_url, "[") || strpos($expanded_url, "]"))
 					$expanded_url = $url->url;
 
 				if ($type == "")
@@ -1174,7 +1154,7 @@ function twitter_expand_entities($a, $body, $item, $no_tags = false, $picture) {
 
 					$body = str_replace($url->url, $footerlink, $body);
 				//} elseif (($oembed_data->type == "photo") AND isset($oembed_data->url) AND !$dontincludemedia) {
-				} elseif (($oembed_data->type == "photo") AND isset($oembed_data->url)) {
+				} elseif (($oembed_data->type == "photo") && isset($oembed_data->url)) {
 					$body = str_replace($url->url,
 							"[url=".$expanded_url."][img]".$oembed_data->url."[/img][/url]",
 							$body);
@@ -1209,20 +1189,22 @@ function twitter_expand_entities($a, $body, $item, $no_tags = false, $picture) {
 		if ($footerurl != "")
 			$footer = add_page_info($footerurl, false, $picture);
 
-		if (($footerlink != "") AND (trim($footer) != "")) {
+		if (($footerlink != "") && (trim($footer) != "")) {
 			$removedlink = trim(str_replace($footerlink, "", $body));
 
-			if (($removedlink == "") OR strstr($body, $removedlink))
+			if (($removedlink == "") || strstr($body, $removedlink))
 				$body = $removedlink;
 
 			$body .= $footer;
 		}
 
-		if (($footer == "") AND ($picture != ""))
+		if (($footer == "") && ($picture != ""))
 			$body .= "\n\n[img]".$picture."[/img]\n";
+		elseif (($footer == "") && ($picture == ""))
+			$body = add_page_info_to_body($body);
 
 		if ($no_tags)
-			return(array("body" => $body, "tags" => ""));
+			return array("body" => $body, "tags" => "", "plain" => $plain);
 
 		$tags_arr = array();
 
@@ -1278,12 +1260,74 @@ function twitter_expand_entities($a, $body, $item, $no_tags = false, $picture) {
 		$tags = implode($tags_arr, ",");
 
 	}
-	return(array("body" => $body, "tags" => $tags));
+	return array("body" => $body, "tags" => $tags, "plain" => $plain);
 }
 
-function twitter_createpost($a, $uid, $post, $self, $create_user, $only_existing_contact) {
+/**
+ * @brief Fetch media entities and add media links to the body
+ *
+ * @param object $post Twitter object with the post
+ * @param array $postarray Array of the item that is about to be posted
+ *
+ * @return $picture string Returns a a single picture string if it isn't a media post
+ */
+function twitter_media_entities($post, &$postarray) {
 
-	$has_picture = false;
+	// There are no media entities? So we quit.
+	if (!is_array($post->extended_entities->media)) {
+		return "";
+	}
+
+	// When the post links to an external page, we only take one picture.
+	// We only do this when there is exactly one media.
+	if ((count($post->entities->urls) > 0) && (count($post->extended_entities->media) == 1)) {
+		$picture = "";
+		foreach($post->extended_entities->media AS $medium) {
+			if (isset($medium->media_url_https)) {
+				$picture = $medium->media_url_https;
+				$postarray['body'] = str_replace($medium->url, "", $postarray['body']);
+			}
+		}
+		return $picture;
+	}
+
+	// This is a pure media post, first search for all media urls
+	$media = array();
+	foreach($post->extended_entities->media AS $medium) {
+		switch($medium->type) {
+			case 'photo':
+				$media[$medium->url] .= "\n[img]".$medium->media_url_https."[/img]";
+				$postarray['object-type'] = ACTIVITY_OBJ_IMAGE;
+				break;
+			case 'video':
+			case 'animated_gif':
+				$media[$medium->url] .= "\n[img]".$medium->media_url_https."[/img]";
+				$postarray['object-type'] = ACTIVITY_OBJ_VIDEO;
+				if (is_array($medium->video_info->variants)) {
+					$bitrate = 0;
+					// We take the video with the highest bitrate
+					foreach ($medium->video_info->variants AS $variant) {
+						if (($variant->content_type == "video/mp4") && ($variant->bitrate >= $bitrate)) {
+							$media[$medium->url] = "\n[video]".$variant->url."[/video]";
+							$bitrate = $variant->bitrate;
+						}
+					}
+				}
+				break;
+			// The following code will only be activated for test reasons
+			//default:
+			//	$postarray['body'] .= print_r($medium, true);
+		}
+	}
+
+	// Now we replace the media urls.
+	foreach ($media AS $key => $value) {
+		$postarray['body'] = str_replace($key, "\n".$value."\n", $postarray['body']);
+	}
+	return "";
+}
+
+function twitter_createpost($a, $uid, $post, $self, $create_user, $only_existing_contact, $noquote) {
 
 	$postarray = array();
 	$postarray['network'] = NETWORK_TWITTER;
@@ -1291,14 +1335,18 @@ function twitter_createpost($a, $uid, $post, $self, $create_user, $only_existing
 	$postarray['uid'] = $uid;
 	$postarray['wall'] = 0;
 	$postarray['uri'] = "twitter::".$post->id_str;
+	$postarray['object'] = json_encode($post);
 
+	// Don't import our own comments
 	$r = q("SELECT * FROM `item` WHERE `extid` = '%s' AND `uid` = %d LIMIT 1",
 			dbesc($postarray['uri']),
 			intval($uid)
 		);
 
-	if (count($r))
+	if (count($r)) {
+		logger("Item with extid ".$postarray['uri']." found.", LOGGER_DEBUG);
 		return(array());
+	}
 
 	$contactid = 0;
 
@@ -1345,8 +1393,10 @@ function twitter_createpost($a, $uid, $post, $self, $create_user, $only_existing
 				$postarray['owner-name'] =  $r[0]["name"];
 				$postarray['owner-link'] = $r[0]["url"];
 				$postarray['owner-avatar'] =  $r[0]["photo"];
-			} else
+			} else {
+				logger("No self contact for user ".$uid, LOGGER_DEBUG);
 				return(array());
+			}
 		}
 		// Don't create accounts of people who just comment something
 		$create_user = false;
@@ -1360,13 +1410,15 @@ function twitter_createpost($a, $uid, $post, $self, $create_user, $only_existing
 
 		$postarray['owner-name'] = $post->user->name;
 		$postarray['owner-link'] = "https://twitter.com/".$post->user->screen_name;
-		$postarray['owner-avatar'] = $post->user->profile_image_url_https;
+		$postarray['owner-avatar'] = twitter_fix_avatar($post->user->profile_image_url_https);
 	}
 
-	if(($contactid == 0) AND !$only_existing_contact)
+	if(($contactid == 0) && !$only_existing_contact) {
 		$contactid = $self['id'];
-	elseif ($contactid <= 0)
+	} elseif ($contactid <= 0) {
+		logger("Contact ID is zero or less than zero.", LOGGER_DEBUG);
 		return(array());
+	}
 
 	$postarray['contact-id'] = $contactid;
 
@@ -1382,96 +1434,65 @@ function twitter_createpost($a, $uid, $post, $self, $create_user, $only_existing
 		$postarray['allow_cid'] = '<' . $self['id'] . '>';
 	}
 
-	$postarray['body'] = $post->text;
-
-	$picture = "";
-
-	// media
-	if (is_array($post->entities->media)) {
-		foreach($post->entities->media AS $media) {
-			switch($media->type) {
-				case 'photo':
-					//$postarray['body'] = str_replace($media->url, "\n\n[img]".$media->media_url_https."[/img]\n", $postarray['body']);
-					//$has_picture = true;
-					$postarray['body'] = str_replace($media->url, "", $postarray['body']);
-					$postarray['object-type'] = ACTIVITY_OBJ_IMAGE;
-					$picture = $media->media_url_https;
-					break;
-				default:
-					$postarray['body'] .= print_r($media, true);
-			}
-		}
+	if (is_string($post->full_text)) {
+		$postarray['body'] = $post->full_text;
+	} else {
+		$postarray['body'] = $post->text;
 	}
+
+	// When the post contains links then use the correct object type
+	if (count($post->entities->urls) > 0) {
+		$postarray['object-type'] = ACTIVITY_OBJ_BOOKMARK;
+	}
+
+	// Search for media links
+	$picture = twitter_media_entities($post, $postarray);
 
 	$converted = twitter_expand_entities($a, $postarray['body'], $post, false, $picture);
 	$postarray['body'] = $converted["body"];
 	$postarray['tag'] = $converted["tags"];
-
 	$postarray['created'] = datetime_convert('UTC','UTC',$post->created_at);
 	$postarray['edited'] = datetime_convert('UTC','UTC',$post->created_at);
 
-	if (is_string($post->place->name))
+	$statustext = $converted["plain"];
+
+	if (is_string($post->place->name)) {
 		$postarray["location"] = $post->place->name;
-
-	if (is_string($post->place->full_name))
-		$postarray["location"] = $post->place->full_name;
-
-	if (is_array($post->geo->coordinates))
-		$postarray["coord"] = $post->geo->coordinates[0]." ".$post->geo->coordinates[1];
-
-	if (is_array($post->coordinates->coordinates))
-		$postarray["coord"] = $post->coordinates->coordinates[1]." ".$post->coordinates->coordinates[0];
-
-	if (is_object($post->retweeted_status)) {
-
-		$postarray['body'] = $post->retweeted_status->text;
-
-		$picture = "";
-
-		// media
-		if (is_array($post->retweeted_status->entities->media)) {
-			foreach($post->retweeted_status->entities->media AS $media) {
-				switch($media->type) {
-					case 'photo':
-						//$postarray['body'] = str_replace($media->url, "\n\n[img]".$media->media_url_https."[/img]\n", $postarray['body']);
-						//$has_picture = true;
-						$postarray['body'] = str_replace($media->url, "", $postarray['body']);
-						$postarray['object-type'] = ACTIVITY_OBJ_IMAGE;
-						$picture = $media->media_url_https;
-						break;
-					default:
-						$postarray['body'] .= print_r($media, true);
-				}
-			}
-		}
-
-		$converted = twitter_expand_entities($a, $postarray['body'], $post->retweeted_status, false, $picture);
-		$postarray['body'] = $converted["body"];
-		$postarray['tag'] = $converted["tags"];
-
-		twitter_fetch_contact($uid, $post->retweeted_status->user, false);
-
-		// Deactivated at the moment, since there are problems with answers to retweets
-		if (false AND !intval(get_config('system','wall-to-wall_share'))) {
-			$postarray['body'] = "[share author='".$post->retweeted_status->user->name.
-				"' profile='https://twitter.com/".$post->retweeted_status->user->screen_name.
-				"' avatar='".$post->retweeted_status->user->profile_image_url_https.
-				"' posted='".datetime_convert('UTC','UTC',$post->retweeted_status->created_at).
-				"' link='https://twitter.com/".$post->retweeted_status->user->screen_name."/status/".$post->retweeted_status->id_str."']".
-				$postarray['body'];
-			$postarray['body'] .= "[/share]";
-		} else {
-			// Let retweets look like wall-to-wall posts
-			$postarray['author-name'] = $post->retweeted_status->user->name;
-			$postarray['author-link'] = "https://twitter.com/".$post->retweeted_status->user->screen_name;
-			$postarray['author-avatar'] = $post->retweeted_status->user->profile_image_url_https;
-			//if (($post->retweeted_status->user->screen_name != "") AND ($post->retweeted_status->id_str != "")) {
-			//	$postarray['plink'] = "https://twitter.com/".$post->retweeted_status->user->screen_name."/status/".$post->retweeted_status->id_str;
-			//	$postarray['uri'] = "twitter::".$post->retweeted_status->id_str;
-			//}
-		}
-
 	}
+	if (is_string($post->place->full_name)) {
+		$postarray["location"] = $post->place->full_name;
+	}
+	if (is_array($post->geo->coordinates)) {
+		$postarray["coord"] = $post->geo->coordinates[0]." ".$post->geo->coordinates[1];
+	}
+	if (is_array($post->coordinates->coordinates)) {
+		$postarray["coord"] = $post->coordinates->coordinates[1]." ".$post->coordinates->coordinates[0];
+	}
+	if (is_object($post->retweeted_status)) {
+		$retweet = twitter_createpost($a, $uid, $post->retweeted_status, $self, false, false, $noquote);
+
+		$retweet['object'] = $postarray['object'];
+		$retweet['private'] = $postarray['private'];
+		$retweet['allow_cid'] = $postarray['allow_cid'];
+		$retweet['contact-id'] = $postarray['contact-id'];
+		$retweet['owner-name'] = $postarray['owner-name'];
+		$retweet['owner-link'] = $postarray['owner-link'];
+		$retweet['owner-avatar'] = $postarray['owner-avatar'];
+
+		$postarray = $retweet;
+	}
+
+	if (is_object($post->quoted_status) && !$noquote) {
+		$quoted = twitter_createpost($a, $uid, $post->quoted_status, $self, false, false, true);
+
+		$postarray['body'] = $statustext;
+
+		$postarray['body'] .= "\n".share_header($quoted['author-name'], $quoted['author-link'], $quoted['author-avatar'], "",
+							$quoted['created'], $quoted['plink']);
+
+		$postarray['body'] .= $quoted['body'].'[/share]';
+	}
+
 	return($postarray);
 }
 
@@ -1512,7 +1533,7 @@ function twitter_checknotification($a, $uid, $own_id, $top_item, $postarray) {
 		foreach($myconv as $conv) {
 			// now if we find a match, it means we're in this conversation
 
-			if(!link_compare($conv['author-link'],$user[0]["url"]) AND !link_compare($conv['author-link'],$own_user[0]["url"]))
+			if(!link_compare($conv['author-link'],$user[0]["url"]) && !link_compare($conv['author-link'],$own_user[0]["url"]))
 				continue;
 
 			require_once('include/enotify.php');
@@ -1542,14 +1563,68 @@ function twitter_checknotification($a, $uid, $own_id, $top_item, $postarray) {
 	}
 }
 
+function twitter_fetchparentposts($a, $uid, $post, $connection, $self, $own_id) {
+	logger("twitter_fetchparentposts: Fetching for user ".$uid." and post ".$post->id_str, LOGGER_DEBUG);
+
+	$posts = array();
+
+	while ($post->in_reply_to_status_id_str != "") {
+		$parameters = array("trim_user" => false, "tweet_mode" => "extended", "id" => $post->in_reply_to_status_id_str);
+
+		$post = $connection->get('statuses/show', $parameters);
+
+		if (!count($post)) {
+			logger("twitter_fetchparentposts: Can't fetch post ".$parameters->id, LOGGER_DEBUG);
+			break;
+		}
+
+		$r = q("SELECT * FROM `item` WHERE `uri` = '%s' AND `uid` = %d LIMIT 1",
+				dbesc("twitter::".$post->id_str),
+				intval($uid)
+			);
+
+		if (count($r))
+			break;
+
+		$posts[] = $post;
+	}
+
+	logger("twitter_fetchparentposts: Fetching ".count($posts)." parents", LOGGER_DEBUG);
+
+	$posts = array_reverse($posts);
+
+	if (count($posts)) {
+		foreach ($posts as $post) {
+			$postarray = twitter_createpost($a, $uid, $post, $self, false, false, false);
+
+			if (trim($postarray['body']) == "")
+				continue;
+
+			$item = item_store($postarray);
+			$postarray["id"] = $item;
+
+			logger('twitter_fetchparentpost: User '.$self["nick"].' posted parent timeline item '.$item);
+
+			if ($item && !function_exists("check_item_notification"))
+				twitter_checknotification($a, $uid, $own_id, $item, $postarray);
+		}
+	}
+}
+
 function twitter_fetchhometimeline($a, $uid) {
 	$ckey    = get_config('twitter', 'consumerkey');
 	$csecret = get_config('twitter', 'consumersecret');
 	$otoken  = get_pconfig($uid, 'twitter', 'oauthtoken');
 	$osecret = get_pconfig($uid, 'twitter', 'oauthsecret');
 	$create_user = get_pconfig($uid, 'twitter', 'create_user');
+	$mirror_posts = get_pconfig($uid, 'twitter', 'mirror_posts');
 
 	logger("twitter_fetchhometimeline: Fetching for user ".$uid, LOGGER_DEBUG);
+
+	$application_name  = get_config('twitter', 'application_name');
+
+	if ($application_name == "")
+		$application_name = $a->get_hostname();
 
 	require_once('library/twitteroauth.php');
 	require_once('include/items.php');
@@ -1586,7 +1661,7 @@ function twitter_fetchhometimeline($a, $uid) {
 		return;
 	}
 
-	$parameters = array("exclude_replies" => false, "trim_user" => false, "contributor_details" => true, "include_rts" => true);
+	$parameters = array("exclude_replies" => false, "trim_user" => false, "contributor_details" => true, "include_rts" => true, "tweet_mode" => "extended");
 	//$parameters["count"] = 200;
 
 
@@ -1611,13 +1686,28 @@ function twitter_fetchhometimeline($a, $uid) {
 
 	if (count($posts)) {
 		foreach ($posts as $post) {
-			if ($post->id_str > $lastid)
+			if ($post->id_str > $lastid) {
 				$lastid = $post->id_str;
+				set_pconfig($uid, 'twitter', 'lasthometimelineid', $lastid);
+			}
 
 			if ($first_time)
 				continue;
 
-			$postarray = twitter_createpost($a, $uid, $post, $self, $create_user, true);
+			if (stristr($post->source, $application_name) && $post->user->screen_name == $own_id) {
+				logger("twitter_fetchhometimeline: Skip previously sended post", LOGGER_DEBUG);
+				continue;
+			}
+
+			if ($mirror_posts && $post->user->screen_name == $own_id && $post->in_reply_to_status_id_str == "") {
+				logger("twitter_fetchhometimeline: Skip post that will be mirrored", LOGGER_DEBUG);
+				continue;
+			}
+
+			if ($post->in_reply_to_status_id_str != "")
+				twitter_fetchparentposts($a, $uid, $post, $connection, $self, $own_id);
+
+			$postarray = twitter_createpost($a, $uid, $post, $self, $create_user, true, false);
 
 			if (trim($postarray['body']) == "")
 				continue;
@@ -1627,7 +1717,7 @@ function twitter_fetchhometimeline($a, $uid) {
 
 			logger('twitter_fetchhometimeline: User '.$self["nick"].' posted home timeline item '.$item);
 
-			if ($item != 0)
+			if ($item && !function_exists("check_item_notification"))
 				twitter_checknotification($a, $uid, $own_id, $item, $postarray);
 
 		}
@@ -1661,7 +1751,10 @@ function twitter_fetchhometimeline($a, $uid) {
 			if ($first_time)
 				continue;
 
-			$postarray = twitter_createpost($a, $uid, $post, $self, false, false);
+			if ($post->in_reply_to_status_id_str != "")
+				twitter_fetchparentposts($a, $uid, $post, $connection, $self, $own_id);
+
+			$postarray = twitter_createpost($a, $uid, $post, $self, false, false, false);
 
 			if (trim($postarray['body']) == "")
 				continue;
@@ -1669,7 +1762,10 @@ function twitter_fetchhometimeline($a, $uid) {
 			$item = item_store($postarray);
 			$postarray["id"] = $item;
 
-			if (!isset($postarray["parent"]) OR ($postarray["parent"] == 0))
+			if ($item && function_exists("check_item_notification"))
+				check_item_notification($item, $uid, NOTIFY_TAGSELF);
+
+			if (!isset($postarray["parent"]) || ($postarray["parent"] == 0))
 				$postarray["parent"] = $item;
 
 			logger('twitter_fetchhometimeline: User '.$self["nick"].' posted mention timeline item '.$item);
@@ -1686,7 +1782,7 @@ function twitter_fetchhometimeline($a, $uid) {
 			} else
 				$parent_id = $postarray['parent'];
 
-			if ($item != 0) {
+			if (($item != 0) && !function_exists("check_item_notification")) {
 				require_once('include/enotify.php');
 				notification(array(
 					'type'         => NOTIFY_TAGSELF,
